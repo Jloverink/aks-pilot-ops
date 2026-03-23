@@ -331,18 +331,27 @@ const SUPA_HDRS = {
 const sget = async (k) => {
   try {
     const res = await fetch(`${SUPA_URL}/rest/v1/aks_store?key=eq.${encodeURIComponent(k)}&select=value`, {headers:SUPA_HDRS});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const rows = await res.json();
     if(!rows||!rows.length) return null;
     return JSON.parse(rows[0].value);
-  } catch(e) { return null; }
+  } catch(e) {
+    console.warn("Supabase sget failed, falling back to localStorage:", k, e.message);
+    try { const v=localStorage.getItem(k); return v?JSON.parse(v):null; } catch{ return null; }
+  }
 };
 const sset = async (k,v) => {
+  const str = JSON.stringify(v);
+  // Always write localStorage as instant local cache
+  try { localStorage.setItem(k, str); } catch{}
+  // Then sync to Supabase
   try {
-    await fetch(`${SUPA_URL}/rest/v1/aks_store`, {
+    const res = await fetch(`${SUPA_URL}/rest/v1/aks_store`, {
       method:"POST", headers:SUPA_HDRS,
-      body:JSON.stringify({key:k, value:JSON.stringify(v), updated_at:new Date().toISOString()})
+      body:JSON.stringify({key:k, value:str, updated_at:new Date().toISOString()})
     });
-  } catch(e) { console.error("sset",k,e); }
+    if(!res.ok) console.warn("Supabase sset failed:", k, res.status);
+  } catch(e) { console.warn("Supabase sset error:", k, e.message); }
 };
 
 // ── COMPLIANCE ────────────────────────────────────────────────────────────────
@@ -2447,8 +2456,9 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
   const [search,     setSearch   ] = useState("");
   // Collapsible sections per pilot: { username: { today:bool, tomorrow:bool, certs:bool } }
   const [openSections, setOpenSections] = useState({});
-  const [hoveredFlight, setHoveredFlight] = useState(null); // {di, fi, f, fc, off, on}
-  const [hoverInfo, setHoverInfo] = useState(null);         // {pct, dayIdx, timeStr}
+  const [hoveredFlight, setHoveredFlight] = useState(null);
+  const [hoverInfo, setHoverInfo] = useState(null);
+  const [pilotStatsOpen, setPilotStatsOpen] = useState({});
   const toggleSection = (username, section) => {
     setOpenSections(prev => {
       const cur = prev[username] || { today:true, tomorrow:true, certs:false };
@@ -2952,10 +2962,10 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     </Tip>
                   );
 
-                  const [showPilotStats,setShowPilotStats]=React.useState(false);
+                  const showPilotStats = !!(pilotStatsOpen[username]);
                   return <div style={{background:"#060a0e",borderRadius:6,marginBottom:8,
                     border:"1px solid #1a2530",overflow:"visible"}}>
-                    <div onClick={e=>{e.stopPropagation();setShowPilotStats(s=>!s);}}
+                    <div onClick={e=>{e.stopPropagation();setPilotStatsOpen(p=>({...p,[username]:!p[username]}));}}
                       style={{display:"flex",justifyContent:"space-between",alignItems:"center",
                         padding:"7px 10px",cursor:"pointer"}}>
                       <span style={{fontSize:9,color:"#9abada",fontWeight:700,letterSpacing:"0.1em"}}>
