@@ -22,30 +22,9 @@
       <div style="font-size:10px;color:#3a5060;">LOADING...</div>
     </div>
   </div>
-
-  <script>
-  // localStorage-backed storage API
-  window.storage = {
-    get: async (key) => {
-      try { const v = localStorage.getItem(key); if(v===null) throw new Error('not found'); return {key, value:v}; }
-      catch(e) { throw e; }
-    },
-    set: async (key, value) => {
-      try { const v = typeof value==='string'?value:JSON.stringify(value); localStorage.setItem(key,v); return {key,value:v}; }
-      catch(e) { return null; }
-    },
-    delete: async (key) => { localStorage.removeItem(key); return {key,deleted:true}; },
-    list: async (prefix) => {
-      const keys = Object.keys(localStorage).filter(k=>!prefix||k.startsWith(prefix));
-      return {keys};
-    }
-  };
-  </script>
-
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
-
   <script type="text/babel" data-presets="react">
 const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
@@ -340,8 +319,31 @@ const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
   routes:"aks_v3_routeavgs", quals:"aks_v3_quals", winterMode:"aks_v3_wintermode" };
-const sget = async (k) => { try{ const r=await window.storage.get(k); return r?JSON.parse(r.value):null; }catch{return null;} };
-const sset = async (k,v) => { try{ await window.storage.set(k,JSON.stringify(v)); }catch(e){console.error(e);} };
+// ── SUPABASE STORAGE ──────────────────────────────────────────────────────────
+const SUPA_URL = "https://yulbmiwgdfozgrenfgfk.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1bGJtaXdnZGZvemdyZW5mZ2ZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMDU5MzgsImV4cCI6MjA4OTg4MTkzOH0.dgo6ycfY903E8wDIU-WgCaHOY2gctuCpcMmeEMijlas";
+const SUPA_HDRS = {
+  "Content-Type": "application/json",
+  "apikey": SUPA_KEY,
+  "Authorization": `Bearer ${SUPA_KEY}`,
+  "Prefer": "resolution=merge-duplicates"
+};
+const sget = async (k) => {
+  try {
+    const res = await fetch(`${SUPA_URL}/rest/v1/aks_store?key=eq.${encodeURIComponent(k)}&select=value`, {headers:SUPA_HDRS});
+    const rows = await res.json();
+    if(!rows||!rows.length) return null;
+    return JSON.parse(rows[0].value);
+  } catch(e) { return null; }
+};
+const sset = async (k,v) => {
+  try {
+    await fetch(`${SUPA_URL}/rest/v1/aks_store`, {
+      method:"POST", headers:SUPA_HDRS,
+      body:JSON.stringify({key:k, value:JSON.stringify(v), updated_at:new Date().toISOString()})
+    });
+  } catch(e) { console.error("sset",k,e); }
+};
 
 // ── COMPLIANCE ────────────────────────────────────────────────────────────────
 function getCompliance(flights, dutyType, duties=[]) {
