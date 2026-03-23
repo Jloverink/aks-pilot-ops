@@ -18,8 +18,7 @@
 <body>
   <div id="root">
     <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#080b0f;color:#4a9eff;font-family:monospace;font-size:13px;letter-spacing:0.1em;flex-direction:column;gap:12px;">
-      <div style="font-size:24px;">✈</div>
-      <div>AKS PILOT OPS</div>
+      <div style="font-size:24px;">✈</div><div>AKS PILOT OPS</div>
       <div style="font-size:10px;color:#3a5060;">LOADING...</div>
     </div>
   </div>
@@ -2198,10 +2197,10 @@ function Tip({text, children, width=220}) {
   const [show, setShow] = useState(false);
   const ref = useRef(null);
   return <div ref={ref} style={{position:"relative",display:"inline-block"}}
-    onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}
-    onTouchStart={e=>{e.stopPropagation();setShow(s=>!s)}}>
+    onMouseEnter={()=>{if(text)setShow(true)}} onMouseLeave={()=>setShow(false)}
+    onTouchStart={e=>{e.stopPropagation();if(text)setShow(s=>!s)}}>
     {children}
-    {show&&<div style={{position:"absolute",bottom:"calc(100% + 6px)",left:"50%",
+    {show&&text&&<div style={{position:"absolute",bottom:"calc(100% + 6px)",left:"50%",
       transform:"translateX(-50%)",width,background:"#0d1520",border:"1px solid #2a3a4a",
       borderRadius:6,padding:"8px 10px",fontSize:10,color:"#c0d4e8",lineHeight:1.5,
       zIndex:500,pointerEvents:"none",boxShadow:"0 4px 20px rgba(0,0,0,0.6)",
@@ -2848,10 +2847,11 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                       color="#6a8aa8" sub={yestDutyMins?fmtMin(yestDutyMins)+" shift":null}
                       tip="Start and end of duty period.\nDefined as first block-off to last block-on."/>
                     <StatCell label="SCHED BLOCK" value={yestSchedTotal?fmtMin(yestSchedTotal):"—"} color="#7a9ab8"
+                      tip="Total Takeflite scheduled block time for yesterday.\nThis is the planned block time, not actual flown time."
                       sub={yf.length+" legs"}/>
-                    <StatCell label="ACTUAL BLOCK" value={yestFltMins?fmtMin(yestFltMins):"—"} color={yestFltMins?"#6aaa8a":"#3a5a5a"}
+                    <StatCell label="ACTUAL BLOCK" tip="Actual block time recorded in Takeflite from Hobbs/GPS data.\nSum of all completed legs for the day." value={yestFltMins?fmtMin(yestFltMins):"—"} color={yestFltMins?"#6aaa8a":"#3a5a5a"}
                       sub={yf.length+" flown"}/>
-                    <StatCell label="DIFF" value={diff===null?"—":diff>0?`+${fmtMin(diff)}`:fmtMin(diff)}
+                    <StatCell label="DIFF" tip="Difference between scheduled and actual block time.\nGreen = ran under schedule, Orange/Red = ran over.\nUseful for identifying routes that are consistently mis-scheduled." value={diff===null?"—":diff>0?`+${fmtMin(diff)}`:fmtMin(diff)}
                       color={diff===null?"#7a9ab0":Math.abs(diff)<=5?"#6aaa8a":diff>0?SC.orange:SC.green}
                       sub={diff===null?null:diff>0?"ran over":"saved time"}
                       tip="Actual block vs scheduled block.\nGreen = flew faster than scheduled.\nOrange = ran over schedule."/>
@@ -2873,10 +2873,11 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     <StatCell label="DUTY" value={todayDutyStart?`${todayDutyStart}–${todayProjEnd||"…"}`:"—"}
                       color="#b8c8d8" sub={todayDutyMins?fmtMin(todayDutyMins)+" est":null}/>
                     <StatCell label="SCHED BLOCK" value={todaySchedTotal?fmtMin(todaySchedTotal):"—"} color="#7a9ab8"
+                      tip="Total Takeflite scheduled block time for today across all legs.\nIncludes both flown and yet-to-fly legs."
                       sub={`${allTodayFlights.length} legs total`}/>
-                    <StatCell label="ACTUAL BLOCK" value={todayFltMins?fmtMin(todayFltMins):"—"} color={SC.green}
+                    <StatCell label="ACTUAL BLOCK" tip="Actual block time recorded in Takeflite from Hobbs/GPS data.\nSum of all completed legs for the day." value={todayFltMins?fmtMin(todayFltMins):"—"} color={SC.green}
                       sub={todayComp.length?`${todayComp.length} flown`:null}/>
-                    <StatCell label="DIFF" value={diff===null?"—":diff>0?`+${fmtMin(diff)}`:fmtMin(diff)}
+                    <StatCell label="DIFF" tip="Difference between scheduled and actual block time.\nGreen = ran under schedule, Orange/Red = ran over.\nUseful for identifying routes that are consistently mis-scheduled." value={diff===null?"—":diff>0?`+${fmtMin(diff)}`:fmtMin(diff)}
                       color={diff===null?"#7a9ab0":Math.abs(diff)<=5?"#6aaa8a":diff>0?SC.orange:SC.green}
                       sub={diff===null?null:diff>0?"running over":"running ahead"}/>
                   </div>;
@@ -2888,6 +2889,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
                   <StatCell label="PROJ START" value={tmrwStart||"—"} color="#4a9eff"
+                      tip={`Projected duty start for tomorrow.\n${tmrwSorted.length?`1 hour before first scheduled departure (${tmrwSorted[0]?.schedOff||"—"}).`:"No flights scheduled — no duty projected."}\nAuto mode only; override with ✎ DUTY button.`}
                     sub={tmrwStart?"1hr before first leg":null}
                     tip="Projected duty start for tomorrow.\nDefault: 1 hour before first scheduled departure.\nCan be overridden using the ✎ ASSIGN DUTY button."/>
                   <StatCell label="REST" tip={`Time between end of today's duty and start of tomorrow's duty.\nFAR Part 135 minimum: 9 hours.\nBelow 9hrs = cannot legally start tomorrow's duty.`} color={restMins===null?"#7a9ab0":restOk?SC.green:SC.red}
@@ -2895,6 +2897,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     warn={restMins!==null&&!restOk}
                     sub={restMins===null?null:restOk?"✓ 9hr min met":"⚠ BELOW 9HR MIN"}/>
                   <StatCell label="CONSEC DAYS" value={c.consecutiveDays||0}
+                      tip={`Consecutive days worked ending on the most recent worked date.\nPart 135 §135.273: maximum 7 consecutive days before a day off is required.\nCurrent streak: ${c.consecutiveDays||0} day${(c.consecutiveDays||0)!==1?"s":""}.`}
                     color={c.consecutiveDays>=7?SC.red:c.consecutiveDays>=5?SC.orange:c.consecutiveDays>=4?"#ffd740":"#b8c8d8"}
                     tip="Days worked in a row without a day off (consecutive days with completed flights).\nUsed in Flight Risk Assessment.\n4+ = yellow, 5+ = orange, 7+ = red."/>
                 </div>
@@ -2907,11 +2910,19 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:10}}>
                     <StatCell label="SCHED BLOCK" value={schedTotal?fmtMin(schedTotal):"—"} color="#4a9eff"
                       sub={`${tmrwSorted.length} legs · Takeflite`}/>
-                    <StatCell label="FIRST LEG" value={tmrwSorted[0]?.schedOff||tmrwSorted[0]?.startTaxi||"—"} color="#7a9ab8"/>
+                    <StatCell label="FIRST LEG"
+                      value={tmrwSorted[0]?.schedOff||tmrwSorted[0]?.startTaxi||"—"} color="#7a9ab8"
+                      tip={tmrwSorted[0]?`First departure tomorrow\n${tmrwSorted[0].origin||"?"}→${tmrwSorted[0].destination||"?"} · ${tmrwSorted[0].tailNumber||"—"}\nSched off: ${tmrwSorted[0].schedOff||"—"}`:"No flights scheduled tomorrow"}/>
                     <StatCell label="LAST LAND" value={(()=>{
                       const last=tmrwSorted[tmrwSorted.length-1];
                       return last?.schedOn||addMinToTime(last?.schedOff||last?.startTaxi||'',(last?._schedDurMins||last?.totalMinutes||0))||"—";
-                    })()} color="#7a9ab8"/>
+                    })()} color="#7a9ab8"
+                      tip={(()=>{
+                        const last=tmrwSorted[tmrwSorted.length-1];
+                        if(!last) return "No flights scheduled tomorrow";
+                        const landT=last.schedOn||addMinToTime(last.schedOff||last.startTaxi||'',(last._schedDurMins||last.totalMinutes||0));
+                        return `Last landing tomorrow\n${last.origin||"?"}→${last.destination||"?"} · ${last.tailNumber||"—"}\nEst arrival: ${landT||"—"}`;
+                      })()}/>
                   </div>;
                 })()}
                 {!tmrwSorted.length&&<div style={{marginBottom:10}}/>}
