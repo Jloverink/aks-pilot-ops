@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <meta name="apple-mobile-web-app-title" content="AKS Ops"/>
@@ -3152,10 +3152,9 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     </div>
 
                     {/* ROWS — wrapped in a container for unified hover crosshair */}
-                    <div style={{position:"relative"}}
+                    <div style={{position:"relative",touchAction:"none"}}
                       onMouseMove={e=>{
                         const r=e.currentTarget.getBoundingClientRect();
-                        // Offset by label width
                         const trackLeft=LABEL_W+6;
                         const trackWidth=r.width-trackLeft;
                         const rawX=e.clientX-r.left-trackLeft;
@@ -3163,7 +3162,28 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         const pct=rawX/trackWidth*100;
                         setHoverInfo({pct,timeStr:toTime(pct),global:true});
                       }}
-                      onMouseLeave={()=>setHoverInfo(null)}>
+                      onMouseLeave={()=>setHoverInfo(null)}
+                      onTouchStart={e=>{
+                        e.preventDefault();
+                        const t=e.touches[0];
+                        const r=e.currentTarget.getBoundingClientRect();
+                        const trackLeft=LABEL_W+6;
+                        const trackWidth=r.width-trackLeft;
+                        const rawX=t.clientX-r.left-trackLeft;
+                        if(rawX<0||rawX>trackWidth) return;
+                        setHoverInfo({pct:rawX/trackWidth*100,timeStr:toTime(rawX/trackWidth*100),global:true});
+                      }}
+                      onTouchMove={e=>{
+                        e.preventDefault();
+                        const t=e.touches[0];
+                        const r=e.currentTarget.getBoundingClientRect();
+                        const trackLeft=LABEL_W+6;
+                        const trackWidth=r.width-trackLeft;
+                        const rawX=t.clientX-r.left-trackLeft;
+                        if(rawX<0||rawX>trackWidth){setHoverInfo(null);return;}
+                        setHoverInfo({pct:rawX/trackWidth*100,timeStr:toTime(rawX/trackWidth*100),global:true});
+                      }}
+                      onTouchEnd={()=>setTimeout(()=>setHoverInfo(null),1500)}>
 
                     {/* Global crosshair line — spans all rows */}
                     {hoverInfo?.global&&<div style={{
@@ -3243,18 +3263,21 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                           {toPct(sun.sunrise)!=null&&<div style={{position:"absolute",top:0,
                             left:`${toPct(sun.sunrise)}%`,width:1,height:"100%",
                             background:"rgba(255,180,50,0.5)",zIndex:3}}>
-                            <div style={{position:"absolute",top:1,left:2,fontSize:7,
-                              color:"rgba(255,180,50,0.9)",fontWeight:700,whiteSpace:"nowrap",
-                              lineHeight:"9px"}}>☀{sun.sunrise}</div>
+                            <div style={{position:"absolute",bottom:"100%",left:2,fontSize:10,
+                              color:"#ffcc33",fontWeight:700,whiteSpace:"nowrap",
+                              background:"rgba(8,12,18,0.9)",padding:"1px 4px",
+                              borderRadius:2,lineHeight:"14px",marginBottom:2}}>☀ {sun.sunrise}</div>
                           </div>}
 
                           {/* SUNSET line */}
                           {toPct(sun.sunset)!=null&&<div style={{position:"absolute",top:0,
                             left:`${toPct(sun.sunset)}%`,width:1,height:"100%",
                             background:"rgba(255,100,30,0.5)",zIndex:3}}>
-                            <div style={{position:"absolute",top:1,right:2,fontSize:7,
-                              color:"rgba(255,120,50,0.9)",fontWeight:700,whiteSpace:"nowrap",
-                              lineHeight:"9px",transform:"translateX(100%)"}}>☽{sun.sunset}</div>
+                            <div style={{position:"absolute",bottom:"100%",right:2,fontSize:10,
+                              color:"#ff9944",fontWeight:700,whiteSpace:"nowrap",
+                              background:"rgba(8,12,18,0.9)",padding:"1px 4px",
+                              borderRadius:2,lineHeight:"14px",marginBottom:2,
+                              transform:"translateX(100%)"}}>☽ {sun.sunset}</div>
                           </div>}
 
                           {/* Duty window — color zones: 0-8h green, 8-12h yellow, 12-14h orange */}
