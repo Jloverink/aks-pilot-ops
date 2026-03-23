@@ -11,6 +11,7 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     body { background: #080b0f; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+    html, body, #root { height: 100%; }
     #root { min-height: 100vh; }
   </style>
 </head>
@@ -403,7 +404,7 @@ const DESKTOP = 900; // px breakpoint
 
 // ── STYLES ────────────────────────────────────────────────────────────────────
 const S = {
-  app:{background:"#080b0f",minHeight:"100vh",maxWidth:430,margin:"0 auto",fontFamily:"'JetBrains Mono',monospace",color:"#e8edf2",display:"flex",flexDirection:"column"},
+  app:{background:"#080b0f",minHeight:"100vh",width:"100%",fontFamily:"'JetBrains Mono',monospace",color:"#e8edf2",display:"flex",flexDirection:"column"},
   topBar:{background:"linear-gradient(180deg,#0d1117 0%,#080b0f 100%)",borderBottom:"1px solid #1e2730",padding:"14px 18px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50},
   content:{flex:1,overflowY:"auto",padding:"16px 14px 120px"},
   navBar:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:600,background:"rgba(8,11,15,0.97)",borderTop:"1px solid rgba(255,255,255,0.12)",backdropFilter:"blur(8px)",display:"flex",zIndex:100},
@@ -7518,7 +7519,7 @@ function App() {
     <div style={{display:"flex",height:"100vh",overflow:"hidden",fontFamily:"'JetBrains Mono',monospace",color:"#e8edf2",background:"#080b0f"}}>
 
       {/* Sidebar nav */}
-      <div style={{width:88,background:"#0a0d12",borderRight:"1px solid #1e2730",display:"flex",flexDirection:"column",alignItems:"center",paddingTop:14,flexShrink:0,overflowY:"auto"}}>
+      <div style={{width:100,background:"#0a0d12",borderRight:"1px solid #1e2730",display:"flex",flexDirection:"column",alignItems:"center",paddingTop:14,flexShrink:0,overflowY:"auto"}}>
         <div style={{fontSize:20,marginBottom:4}}>✈</div>
         <div style={{fontSize:7,color:"#4a9eff",letterSpacing:"0.12em",fontWeight:700,marginBottom:16,textAlign:"center"}}>AKS<br/>PART 135</div>
         <div style={{width:"100%",height:1,background:"#1e2730",marginBottom:8}}/>
@@ -7528,25 +7529,37 @@ function App() {
         ))}
       </div>
 
-      {/* Single main panel — max width so it's comfortable to read on wide screens */}
-      <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
+      {/* Main content area — fills all remaining width */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0,overflow:"hidden"}}>
         {/* Top bar */}
-        <div style={{background:"#0a0d12",borderBottom:"1px solid #1e2730",padding:"10px 24px",
+        <div style={{background:"#0a0d12",borderBottom:"1px solid #1e2730",padding:"10px 28px",
           display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <div>
-            <div style={{fontSize:13,color:"#4a9eff",fontWeight:700,letterSpacing:"0.12em"}}>ALASKA SEAPLANES</div>
-            <div style={{fontSize:10,color:"#7a9ab8",letterSpacing:"0.06em"}}>PART 135 · PILOT OPS · {today()} · v{APP_VERSION}</div>
+            <div style={{fontSize:14,color:"#4a9eff",fontWeight:700,letterSpacing:"0.12em"}}>ALASKA SEAPLANES</div>
+            <div style={{fontSize:10,color:"#7a9ab8",letterSpacing:"0.06em"}}>PART 135 · PILOT OPS · {today()} · <span style={{color:"#3a5060"}}>v{APP_VERSION}</span></div>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:16}}>
-            <div style={{fontSize:10,color:"#7a9ab8"}}>{flights.filter(f=>f.date===today()).length} legs today</div>
-            <div style={{fontSize:12,color:"#4a9eff",fontWeight:700,letterSpacing:"0.15em"}}>
+          <div style={{display:"flex",alignItems:"center",gap:20}}>
+            {/* Winter Mode toggle */}
+            <div onClick={()=>{const next=!winterMode;setWinterMode(next);sset(SK.winterMode,next);}}
+              style={{cursor:"pointer",display:"flex",alignItems:"center",gap:8}}>
+              <div style={{width:40,height:22,borderRadius:11,position:"relative",transition:"background 0.2s",
+                background:winterMode?"#4a9eff":"#1e2730",border:`1px solid ${winterMode?"#4a9eff44":"#2a3a4a"}`}}>
+                <div style={{position:"absolute",top:3,left:winterMode?20:3,width:14,height:14,
+                  borderRadius:"50%",background:winterMode?"#fff":"#4a6a7a",transition:"left 0.2s"}}/>
+              </div>
+              <span style={{fontSize:9,fontWeight:700,color:winterMode?"#4a9eff":"#4a6a7a",letterSpacing:"0.08em"}}>
+                {winterMode?"❄ WINTER":"☀ SUMMER"}
+              </span>
+            </div>
+            <div style={{fontSize:11,color:"#7a9ab8"}}>{flights.filter(f=>f.date===today()).length} legs today</div>
+            <div style={{fontSize:13,color:"#4a9eff",fontWeight:700,letterSpacing:"0.12em"}}>
               {NAV.find(n=>n.id===screen)?.icon} {NAV.find(n=>n.id===screen)?.label}
             </div>
           </div>
         </div>
-        {/* Content — centered with comfortable max-width */}
-        <div style={{flex:1,overflowY:"auto",padding:"24px 32px 40px",display:"flex",justifyContent:"center"}}>
-          <div style={{width:"100%",maxWidth:900}}>{renderScreen()}</div>
+        {/* Content — full width, generous padding */}
+        <div style={{flex:1,overflowY:"auto",padding:"20px 28px 40px"}}>
+          {renderScreen()}
         </div>
       </div>
     </div>
