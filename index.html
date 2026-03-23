@@ -12,54 +12,21 @@
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     body { background: #080b0f; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
     #root { min-height: 100vh; }
-    /* Prevent text selection on tap */
-    button, [role="button"] { -webkit-user-select: none; user-select: none; }
   </style>
 </head>
 <body>
-  <div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#080b0f;color:#4a9eff;font-family:monospace;font-size:13px;letter-spacing:0.1em;flex-direction:column;gap:12px;">
-    <div style="font-size:24px;">✈</div>
-    <div>AKS PILOT OPS</div>
-    <div style="font-size:10px;color:#3a5060;">LOADING...</div>
-  </div></div>
-
-  <!-- localStorage polyfill for window.storage API -->
-  <script>
-  window.storage = {
-    get: async (key) => {
-      try {
-        const val = localStorage.getItem('aks__' + key);
-        if (val === null) throw new Error('not found');
-        return { key, value: val };
-      } catch(e) { throw e; }
-    },
-    set: async (key, value) => {
-      try {
-        const v = typeof value === 'string' ? value : JSON.stringify(value);
-        localStorage.setItem('aks__' + key, v);
-        return { key, value: v };
-      } catch(e) { return null; }
-    },
-    delete: async (key) => {
-      localStorage.removeItem('aks__' + key);
-      return { key, deleted: true };
-    },
-    list: async (prefix) => {
-      const keys = Object.keys(localStorage)
-        .filter(k => k.startsWith('aks__' + (prefix||'')))
-        .map(k => k.replace('aks__', ''));
-      return { keys };
-    }
-  };
-  </script>
-
-  <!-- React 18 + ReactDOM from CDN -->
+  <div id="root">
+    <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#080b0f;color:#4a9eff;font-family:monospace;font-size:13px;letter-spacing:0.1em;flex-direction:column;gap:12px;">
+      <div style="font-size:24px;">✈</div>
+      <div>AKS PILOT OPS</div>
+      <div style="font-size:10px;color:#3a5060;">LOADING...</div>
+    </div>
+  </div>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <!-- Babel standalone for JSX -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
-
   <script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
 // ── SHEETJS LOADER ─────────────────────────────────────────────────────────────
 let _xlsxCache = null;
