@@ -12,21 +12,54 @@
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     body { background: #080b0f; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
     #root { min-height: 100vh; }
+    /* Prevent text selection on tap */
+    button, [role="button"] { -webkit-user-select: none; user-select: none; }
   </style>
 </head>
 <body>
-  <div id="root">
-    <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#080b0f;color:#4a9eff;font-family:monospace;font-size:13px;letter-spacing:0.1em;flex-direction:column;gap:12px;">
-      <div style="font-size:24px;">✈</div>
-      <div>AKS PILOT OPS</div>
-      <div style="font-size:10px;color:#3a5060;">LOADING...</div>
-    </div>
-  </div>
+  <div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#080b0f;color:#4a9eff;font-family:monospace;font-size:13px;letter-spacing:0.1em;flex-direction:column;gap:12px;">
+    <div style="font-size:24px;">✈</div>
+    <div>AKS PILOT OPS</div>
+    <div style="font-size:10px;color:#3a5060;">LOADING...</div>
+  </div></div>
+
+  <!-- localStorage polyfill for window.storage API -->
+  <script>
+  window.storage = {
+    get: async (key) => {
+      try {
+        const val = localStorage.getItem('aks__' + key);
+        if (val === null) throw new Error('not found');
+        return { key, value: val };
+      } catch(e) { throw e; }
+    },
+    set: async (key, value) => {
+      try {
+        const v = typeof value === 'string' ? value : JSON.stringify(value);
+        localStorage.setItem('aks__' + key, v);
+        return { key, value: v };
+      } catch(e) { return null; }
+    },
+    delete: async (key) => {
+      localStorage.removeItem('aks__' + key);
+      return { key, deleted: true };
+    },
+    list: async (prefix) => {
+      const keys = Object.keys(localStorage)
+        .filter(k => k.startsWith('aks__' + (prefix||'')))
+        .map(k => k.replace('aks__', ''));
+      return { keys };
+    }
+  };
+  </script>
+
+  <!-- React 18 + ReactDOM from CDN -->
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <!-- Babel standalone for JSX -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
   <script type="text/babel" data-presets="react">
-const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
 // ── SHEETJS LOADER ─────────────────────────────────────────────────────────────
 let _xlsxCache = null;
@@ -315,6 +348,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
+const APP_VERSION = "1.0.0"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -2962,10 +2996,10 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     </Tip>
                   );
 
-                  const showPilotStats = !!(pilotStatsOpen[username]);
+                  const showPilotStats = !!(pilotStatsOpen[pd.username]);
                   return <div style={{background:"#060a0e",borderRadius:6,marginBottom:8,
                     border:"1px solid #1a2530",overflow:"visible"}}>
-                    <div onClick={e=>{e.stopPropagation();setPilotStatsOpen(p=>({...p,[username]:!p[username]}));}}
+                    <div onClick={e=>{e.stopPropagation();setPilotStatsOpen(p=>({...p,[pd.username]:!p[pd.username]}));}}
                       style={{display:"flex",justifyContent:"space-between",alignItems:"center",
                         padding:"7px 10px",cursor:"pointer"}}>
                       <span style={{fontSize:9,color:"#9abada",fontWeight:700,letterSpacing:"0.1em"}}>
@@ -7511,7 +7545,7 @@ function App() {
           display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <div>
             <div style={{fontSize:13,color:"#4a9eff",fontWeight:700,letterSpacing:"0.12em"}}>ALASKA SEAPLANES</div>
-            <div style={{fontSize:10,color:"#7a9ab8",letterSpacing:"0.06em"}}>PART 135 · PILOT OPS · {today()}</div>
+            <div style={{fontSize:10,color:"#7a9ab8",letterSpacing:"0.06em"}}>PART 135 · PILOT OPS · {today()} · v{APP_VERSION}</div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:16}}>
             <div style={{fontSize:10,color:"#7a9ab8"}}>{flights.filter(f=>f.date===today()).length} legs today</div>
@@ -7536,7 +7570,7 @@ function App() {
       <div style={S.topBar}>
         <div>
           <div style={{fontSize:13,letterSpacing:"0.15em",color:"#4a9eff",fontWeight:700,textTransform:"uppercase"}}>✈ ALASKA SEAPLANES</div>
-          <div style={{fontSize:11,color:"#8aaabb",letterSpacing:"0.08em"}}>PART 135 · PILOT LOG</div>
+          <div style={{fontSize:11,color:"#8aaabb",letterSpacing:"0.08em"}}>PART 135 · PILOT OPS <span style={{color:"#3a5a6a",fontSize:9}}>v{APP_VERSION}</span></div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           {/* Winter Mode toggle */}
