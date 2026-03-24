@@ -311,7 +311,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.2.3"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.2.4"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -2807,62 +2807,6 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
               <span>■ 8-in-24 actual &nbsp; <span style={{opacity:0.5}}>■ +projected</span></span>
               <span>8:00 limit</span>
             </div>
-            {/* Live aging countdown */}
-            {(()=>{
-              const now = Date.now();
-              const akOff = (new Date().getUTCMonth()>=2&&new Date().getUTCMonth()<=10)?-8:-9;
-              const akOffNum = akOff;
-              const inWin = c.inWindowFlights||[];
-              // All flights still in window that will age out (from any day including today)
-              // Only show if there are flights aging out within the next 24h
-              const aging = inWin.filter(f=>f.startTaxi&&f.totalMinutes>0);
-              if(!aging.length) return null;
-              // Only show countdown if oldest flight ages out in future
-              const akOff2 = (new Date().getUTCMonth()>=2&&new Date().getUTCMonth()<=10)?-8:-9;
-              const oldestAgingMs2 = (()=>{
-                const f=aging[0];
-                const d=new Date(f.date+'T'+f.startTaxi+':00');
-                return d.getTime()-akOff2*3600000+24*3600000;
-              })();
-              if(oldestAgingMs2 <= now) return null;
-              // Total minutes that will age out
-              const agingMins = aging.reduce((s,f)=>s+(f.totalMinutes||0),0);
-              // The oldest aging flight ages out first
-              const oldest = aging[0];
-              const oldestMs = (()=>{
-                const d=new Date(oldest.date+'T'+oldest.startTaxi+':00');
-                const utcMs=d.getTime()-akOffNum*3600000;
-                return utcMs+24*3600000;
-              })();
-              const msLeft = oldestMs - now;
-              if(msLeft <= 0) return null; // already aged out, will recalc next tick
-              const hLeft = Math.floor(msLeft/3600000);
-              const mLeft = Math.floor((msLeft%3600000)/60000);
-              const sLeft = Math.floor((msLeft%60000)/1000);
-              const countdown = hLeft>0?`${hLeft}h ${mLeft}m`:`${mLeft}m ${sLeft}s`;
-              const isAlsoFlying = (c.enrouteLegs||0)>0;
-              const enrMins = (c.enrouteFlights||[]).reduce((s,f)=>s+(f.totalMinutes||0),0);
-              return <div style={{fontSize:9,color:"#7a9ab8",marginTop:3,display:"flex",
-                alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                {isAlsoFlying
-                  ? <>
-                      <span style={{color:"#ffd740",fontWeight:700}}>⟳</span>
-                      <span style={{color:"#5aaa8a"}}>+{fmtMin(enrMins)} adding</span>
-                      <span style={{color:"#7a9ab8"}}>·</span>
-                      <span style={{color:"#ff9944"}}>-{fmtMin(agingMins)} erasing</span>
-                      <span style={{color:"#7a9ab8"}}>·</span>
-                      <span style={{color:"#8aaabb"}}>net {enrMins>=agingMins?"+":""}{fmtMin(Math.abs(enrMins-agingMins))} in {countdown}</span>
-                    </>
-                  : <>
-                      <span style={{color:"#ff9944"}}>⏳</span>
-                      <span><span style={{color:"#ff9944",fontWeight:700}}>{fmtMin(agingMins)}</span>
-                        <span style={{color:"#7a9ab8"}}> drops off in </span>
-                        <span style={{color:"#e0eaf8",fontWeight:700}}>{countdown}</span>
-                      </span>
-                    </>
-                }
-              </div>;
-            })()}
           </div>
 
           {/* ── EXPANDED DETAIL ── */}
@@ -3020,7 +2964,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                 {/* Row 4: Rolling 8-in-24 */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:10}}>
                   <StatCell label="8-IN-24" value={fmtMin(c.rolling)} color={SC[c.status]||SC.green}
-                  tip="Total actual block time in the rolling 24-hour window.\nWindow anchors on last completed block-off time.\nPart 135 limit: 8:00 hours."/>
+                  tip="Total actual block time in the rolling 24-hour window.\nAnchored to current wall clock — old flights age out automatically.\nPart 135 limit: 8:00 hours."/>
                   <StatCell label="+EN-ROUTE" value={fmtMin(c.rollingProjected)} color={col}
                   tip={`8-in-24 actual PLUS any en-route flights still in progress.\nThis is what the rolling total will be once current flight(s) land.\nCurrently adding: ${fmtMin(c.rollingProjected-c.rolling)} for en-route leg(s).`}/>
                   <StatCell label="REMAINING"   value={fmtMin(Math.max(0,480-c.rollingProjected))} color={c.rollingProjected>=480?SC.red:SC.green}
@@ -3028,7 +2972,59 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   <StatCell label="QTR TOTAL"   value={c.q1Hrs.toFixed(1)+"h"} color={c.q1Hrs>=470?SC.red:c.q1Hrs>=420?SC.orange:"#d0dae8"}
                   tip="Actual block hours this calendar quarter (Jan-Mar, Apr-Jun, etc).\nPart 135 quarterly limit: 500 hours."/>
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
+                {/* Live countdown banner — shows when yesterday flights still in 24h window */}
+                {(()=>{
+                  const now = Date.now();
+                  const akOff = (new Date().getUTCMonth()>=2&&new Date().getUTCMonth()<=10)?-8:-9;
+                  const inWin = c.inWindowFlights||[];
+                  const aging = inWin.filter(f=>f.startTaxi&&f.totalMinutes>0);
+                  if(!aging.length) return null;
+                  const oldest = aging[0];
+                  const agesOutMs = (()=>{
+                    const d=new Date(oldest.date+'T'+oldest.startTaxi+':00');
+                    return d.getTime()-akOff*3600000+24*3600000;
+                  })();
+                  const msLeft = agesOutMs - now;
+                  if(msLeft <= 0) return null;
+                  const hLeft = Math.floor(msLeft/3600000);
+                  const mLeft = Math.floor((msLeft%3600000)/60000);
+                  const sLeft = Math.floor((msLeft%60000)/1000);
+                  const agingMins = aging.reduce((s,f)=>s+(f.totalMinutes||0),0);
+                  const isAlsoFlying = (c.enrouteLegs||0)>0;
+                  const enrMins = (c.enrouteFlights||[]).reduce((s,f)=>s+(f.totalMinutes||0),0);
+                  const netMins = enrMins - agingMins;
+                  return <div style={{
+                    background:"rgba(255,150,50,0.07)",border:"1px solid rgba(255,150,50,0.2)",
+                    borderRadius:5,padding:"7px 10px",marginBottom:10,
+                    display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:6}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:14}}>{isAlsoFlying?"⟳":"⏳"}</span>
+                      <div>
+                        {isAlsoFlying
+                          ? <div style={{fontSize:10,color:"#e0d0c0",fontWeight:700}}>
+                              <span style={{color:"#5aaa8a"}}>+{fmtMin(enrMins)} adding</span>
+                              <span style={{color:"#7a9ab8",margin:"0 6px"}}>·</span>
+                              <span style={{color:"#ff9944"}}>-{fmtMin(agingMins)} erasing</span>
+                              <span style={{color:"#7a9ab8",margin:"0 6px"}}>·</span>
+                              <span style={{color:netMins>=0?SC.green:SC.orange}}>net {netMins>=0?"+":""}{fmtMin(Math.abs(netMins))}</span>
+                            </div>
+                          : <div style={{fontSize:10,color:"#e0d0c0"}}>
+                              <span style={{color:"#ff9944",fontWeight:700}}>{fmtMin(agingMins)}</span>
+                              <span style={{color:"#a0b0c0"}}> erasing from 8-in-24</span>
+                            </div>}
+                        <div style={{fontSize:9,color:"#7a9ab8",marginTop:2}}>
+                          {oldest.origin||"?"}→{oldest.destination||"?"} · {oldest.tailNumber||"—"} · off {oldest.startTaxi}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{fontSize:22,fontWeight:700,color:"#ffd740",fontFamily:"monospace",letterSpacing:"0.05em",lineHeight:1}}>
+                        {hLeft>0?`${hLeft}h ${String(mLeft).padStart(2,'0')}m`:`${String(mLeft).padStart(2,'0')}m ${String(sLeft).padStart(2,'0')}s`}
+                      </div>
+                      <div style={{fontSize:8,color:"#7a9ab8",marginTop:2}}>until drop</div>
+                    </div>
+                  </div>;
+                })()}                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
                   <StatCell label="ANNUAL"    value={(c.annualHrs||0).toFixed(0)+"h"} color={(c.annualHrs||0)>=1200?SC.red:(c.annualHrs||0)>=1000?SC.orange:"#d0dae8"}
                   tip="Total block hours this calendar year.\nPart 135 annual limit: 1,200 hours."/>
                   <StatCell label="LAST WORKED" value={c.lastWorkedDate||"—"} color="#8aaabb"
@@ -3227,10 +3223,29 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     return Object.values(wx).find(s=>s.name===dest||s.icao===dest)||null;
                   };
 
+                  // Compute duty start reasons for tooltip
+                  const dutyReason = (duty, date, flights) => {
+                    if(!duty) return null;
+                    if(duty.blanket) return "Blanket duty · 06:00–20:00";
+                    if(duty.assigned) return "Manually assigned";
+                    // Auto mode — figure out why
+                    const isPast = date < todayStr;
+                    const starts = flights.map(f=>f.startTaxi).filter(Boolean).sort();
+                    const ends   = flights.map(f=>f.stopTaxi).filter(Boolean).sort();
+                    const startReason = starts.length ? `1hr before first flight (${starts[0]})` : "No flights";
+                    const endReason   = isPast && ends.length
+                      ? `+30m after last landing (${ends[ends.length-1]})`
+                      : "Start + 14hrs (max duty)";
+                    return `Start: ${startReason}
+End: ${endReason}`;
+                  };
                   const DAYS=[
-                    {label:"YESTERDAY", date:yesterdayStr, flights:allYestFlights, duty:yestDutyForTL,  color:"#5aaa8a"},
-                    {label:"TODAY",     date:todayStr,     flights:todayAll,       duty:todayDutyForTL, color:"#4a9eff"},
-                    {label:"TOMORROW",  date:tomorrowStr,  flights:tmrwAll,        duty:tmrwProjDuty,   color:"#aa7adf", isTmrw:true},
+                    {label:"YESTERDAY", date:yesterdayStr, flights:allYestFlights, duty:yestDutyForTL,  color:"#5aaa8a",
+                      dutyReason:dutyReason(yestDutyForTL, yesterdayStr, allYestFlights)},
+                    {label:"TODAY",     date:todayStr,     flights:todayAll,       duty:todayDutyForTL, color:"#4a9eff",
+                      dutyReason:dutyReason(todayDutyForTL, todayStr, todayAll)},
+                    {label:"TOMORROW",  date:tomorrowStr,  flights:tmrwAll,        duty:tmrwProjDuty,   color:"#aa7adf", isTmrw:true,
+                      dutyReason:dutyReason(tmrwProjDuty, tomorrowStr, tmrwAll)},
                   ];
 
                   const ROW_H=32; // taller rows so duty band is clearly visible below flights
@@ -3466,21 +3481,24 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                               <div style={{position:"absolute",top:0,bottom:0,left:`${dsp}%`,
                                 width:2,background:day.color,zIndex:6,
                                 boxShadow:`0 0 6px ${day.color}99`}}/>
-                              {/* Duty start label — below row, right-anchored to line */}
-                              <div style={{position:"absolute",top:"calc(100% + 3px)",left:`${dsp}%`,
-                                transform:"translateX(-2px)",fontSize:7,color:day.color,fontWeight:700,
-                                background:"#080c12",padding:"1px 3px",borderRadius:2,
-                                whiteSpace:"nowrap",zIndex:7,border:`1px solid ${day.color}44`}}>
-                                ▶ {day.duty?.dutyStart}
-                              </div>
+                              {/* Duty start label below row with reason */}
+                              <Tip text={day.dutyReason} width={200}>
+                                <div style={{position:"absolute",top:"calc(100% + 3px)",left:`${dsp}%`,
+                                  transform:"translateX(-2px)",fontSize:7,color:day.color,fontWeight:700,
+                                  background:"#080c12",padding:"1px 4px",borderRadius:2,
+                                  whiteSpace:"nowrap",zIndex:7,border:`1px solid ${day.color}55`,
+                                  cursor:"default"}}>
+                                  ▶ {day.duty?.dutyStart}
+                                </div>
+                              </Tip>
 
                               {/* DUTY END — right edge */}
                               <div style={{position:"absolute",top:0,bottom:0,left:`${dep}%`,
                                 width:2,background:`${day.color}bb`,zIndex:6}}/>
-                              {/* Duty end label — below row, left-anchored to line */}
+                              {/* Duty end label below row */}
                               <div style={{position:"absolute",top:"calc(100% + 3px)",left:`${dep}%`,
                                 transform:"translateX(calc(-100% + 2px))",fontSize:7,color:`${day.color}cc`,fontWeight:700,
-                                background:"#080c12",padding:"1px 3px",borderRadius:2,
+                                background:"#080c12",padding:"1px 4px",borderRadius:2,
                                 whiteSpace:"nowrap",zIndex:7,border:`1px solid ${day.color}33`}}>
                                 {day.duty?.dutyEnd} ◀
                               </div>
@@ -3580,28 +3598,31 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                             background:"rgba(255,71,87,0.25)",
                             zIndex:9,pointerEvents:"none"}}/>}
 
-                          {/* NOW line per row */}
+                          {/* NOW line per row — no labels, just the line */}
                           {nowPct!=null&&<div style={{position:"absolute",top:0,left:`${nowPct}%`,
                             width:2,height:"100%",background:"#ff4757cc",zIndex:7,
                             pointerEvents:"none",borderRadius:1,
-                            boxShadow:"0 0 4px #ff475788"}}>
-                            {/* NOW label top */}
-                            <div style={{position:"absolute",top:0,left:"50%",
-                              transform:"translateX(-50%)",
-                              fontSize:7,color:"#ff4757",fontWeight:700,
-                              background:"#080c12",padding:"0px 3px",borderRadius:2,
-                              whiteSpace:"nowrap",lineHeight:"12px"}}>NOW</div>
-                            {/* NOW label bottom */}
-                            <div style={{position:"absolute",bottom:0,left:"50%",
-                              transform:"translateX(-50%)",
-                              fontSize:7,color:"#ff4757",fontWeight:700,
-                              background:"#080c12",padding:"0px 3px",borderRadius:2,
-                              whiteSpace:"nowrap",lineHeight:"12px"}}>NOW</div>
-                          </div>}
+                            boxShadow:"0 0 4px #ff475788"}}/>}
                         </div>
                       </div>;
                     })}
 
+                    {/* NOW label overlay — spans entire rows area, top and bottom only */}
+                    {nowPct!=null&&<div style={{
+                      position:"absolute",top:0,bottom:0,
+                      left:`calc(${LABEL_W}px + 6px + (100% - ${LABEL_W}px - 6px) * ${nowPct} / 100)`,
+                      width:0,zIndex:20,pointerEvents:"none"}}>
+                      {/* Top NOW label */}
+                      <div style={{position:"absolute",top:-16,left:"50%",transform:"translateX(-50%)",
+                        fontSize:8,color:"#ff4757",fontWeight:700,background:"#080c12",
+                        padding:"1px 5px",borderRadius:3,border:"1px solid #ff475744",
+                        whiteSpace:"nowrap"}}>NOW</div>
+                      {/* Bottom NOW label */}
+                      <div style={{position:"absolute",bottom:-16,left:"50%",transform:"translateX(-50%)",
+                        fontSize:8,color:"#ff4757",fontWeight:700,background:"#080c12",
+                        padding:"1px 5px",borderRadius:3,border:"1px solid #ff475744",
+                        whiteSpace:"nowrap"}}>NOW</div>
+                    </div>}
                     </div>{/* end rows wrapper */}
 
 
