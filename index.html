@@ -311,7 +311,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.2.2"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.2.3"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -2209,20 +2209,32 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
 function Tip({text, children, width=220}) {
   const [show, setShow] = useState(false);
   const ref = useRef(null);
-  return <div ref={ref} style={{position:"relative",display:"inline-block"}}
-    onMouseEnter={()=>{if(text)setShow(true)}} onMouseLeave={()=>setShow(false)}
-    onTouchStart={e=>{e.stopPropagation();if(text)setShow(s=>!s)}}>
+  if(!text) return <>{children}</>;
+  return <div style={{position:"relative",display:"inline-flex",alignItems:"center",gap:3}}>
     {children}
-    {show&&text&&<div style={{position:"absolute",bottom:"calc(100% + 6px)",left:"50%",
-      transform:"translateX(-50%)",width,background:"#0d1520",border:"1px solid #2a3a4a",
-      borderRadius:6,padding:"8px 10px",fontSize:10,color:"#c0d4e8",lineHeight:1.5,
-      zIndex:500,pointerEvents:"none",boxShadow:"0 4px 20px rgba(0,0,0,0.6)",
-      whiteSpace:"pre-wrap"}}>
-      {text}
-      <div style={{position:"absolute",bottom:-5,left:"50%",transform:"translateX(-50%)",
-        width:8,height:8,background:"#0d1520",border:"1px solid #2a3a4a",
-        borderRight:"none",borderTop:"none",transform:"translateX(-50%) rotate(-45deg)"}}/>
-    </div>}
+    {/* ⓘ icon — click on mobile, hover on desktop */}
+    <div ref={ref} style={{position:"relative",display:"inline-flex",alignItems:"center"}}
+      onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}
+      onTouchStart={e=>{e.stopPropagation();e.preventDefault();setShow(s=>!s)}}>
+      <span style={{
+        display:"inline-flex",alignItems:"center",justifyContent:"center",
+        width:13,height:13,borderRadius:"50%",
+        background:show?"rgba(74,158,255,0.3)":"rgba(74,158,255,0.12)",
+        border:"1px solid rgba(74,158,255,0.35)",
+        color:"#4a9eff",fontSize:8,fontWeight:700,cursor:"pointer",
+        lineHeight:1,flexShrink:0,userSelect:"none",
+        transition:"background 0.15s"}}>i</span>
+      {show&&<div style={{position:"absolute",bottom:"calc(100% + 6px)",left:"50%",
+        transform:"translateX(-50%)",width,background:"#0d1520",border:"1px solid #2a3a4a",
+        borderRadius:6,padding:"8px 10px",fontSize:10,color:"#c0d4e8",lineHeight:1.5,
+        zIndex:500,pointerEvents:"none",boxShadow:"0 4px 20px rgba(0,0,0,0.6)",
+        whiteSpace:"pre-wrap"}}>
+        {text}
+        <div style={{position:"absolute",bottom:-5,left:"50%",
+          width:8,height:8,background:"#0d1520",border:"1px solid #2a3a4a",
+          borderRight:"none",borderTop:"none",transform:"translateX(-50%) rotate(-45deg)"}}/>
+      </div>}
+    </div>
   </div>;
 }
 
@@ -2799,18 +2811,28 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
             {(()=>{
               const now = Date.now();
               const akOff = (new Date().getUTCMonth()>=2&&new Date().getUTCMonth()<=10)?-8:-9;
+              const akOffNum = akOff;
               const inWin = c.inWindowFlights||[];
-              // Find flights from before today that are still in the 24h window
-              const aging = inWin.filter(f=>f.date<todayStr&&f.startTaxi&&f.totalMinutes>0);
+              // All flights still in window that will age out (from any day including today)
+              // Only show if there are flights aging out within the next 24h
+              const aging = inWin.filter(f=>f.startTaxi&&f.totalMinutes>0);
               if(!aging.length) return null;
+              // Only show countdown if oldest flight ages out in future
+              const akOff2 = (new Date().getUTCMonth()>=2&&new Date().getUTCMonth()<=10)?-8:-9;
+              const oldestAgingMs2 = (()=>{
+                const f=aging[0];
+                const d=new Date(f.date+'T'+f.startTaxi+':00');
+                return d.getTime()-akOff2*3600000+24*3600000;
+              })();
+              if(oldestAgingMs2 <= now) return null;
               // Total minutes that will age out
               const agingMins = aging.reduce((s,f)=>s+(f.totalMinutes||0),0);
               // The oldest aging flight ages out first
               const oldest = aging[0];
               const oldestMs = (()=>{
                 const d=new Date(oldest.date+'T'+oldest.startTaxi+':00');
-                const utcMs=d.getTime()-akOff*3600000;
-                return utcMs+24*3600000; // when it exits the 24h window
+                const utcMs=d.getTime()-akOffNum*3600000;
+                return utcMs+24*3600000;
               })();
               const msLeft = oldestMs - now;
               if(msLeft <= 0) return null; // already aged out, will recalc next tick
@@ -3233,12 +3255,9 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         {allHourTicks.map(h=>{
                           const pct=((h*60)-TL_START)/TL_SPAN*100;
                           if(pct<0||pct>100) return null;
-                          const isMajor=majorTicks.includes(h);
                           return <div key={h} style={{position:"absolute",left:`${pct}%`,
                             transform:"translateX(-50%)",
-                            fontSize:isMajor?9:8,
-                            color:isMajor?"#7a9abb":"#3a5060",
-                            fontWeight:isMajor?700:400}}>
+                            fontSize:9,color:"#5a7a8a",fontWeight:500}}>
                             {h===24?"00":String(h).padStart(2,'0')}
                           </div>;
                         })}
@@ -3313,14 +3332,12 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         <div style={{flex:1,position:"relative",height:ROW_H,borderRadius:3,
                           background:"#0a0e14",overflow:"visible",cursor:"crosshair"}}>
 
-                          {/* Full-height grid lines for every hour */}
+                          {/* Full-height grid lines for every hour — all same subtle color */}
                           {allHourTicks.map(h=>{
                             const pct=((h*60)-TL_START)/TL_SPAN*100;
                             if(pct<0||pct>100) return null;
-                            const isMajor=majorTicks.includes(h);
                             return <div key={h} style={{position:"absolute",top:0,left:`${pct}%`,
-                              width:1,height:"100%",
-                              background:isMajor?"#1a2a3a":"#111820",zIndex:0}}/>;
+                              width:1,height:"100%",background:"#141e28",zIndex:0}}/>;
                           })}
 
                           {/* TWILIGHT bands — nautical=very dark, civil=medium */}
@@ -3445,31 +3462,27 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                                 left:`${dsp + dutyW*(p12h/100)}%`,
                                 width:1,background:"rgba(255,109,0,0.6)",zIndex:3}}/>}
 
-                              {/* DUTY START — bright left edge + time label above row */}
+                              {/* DUTY START — bright left edge */}
                               <div style={{position:"absolute",top:0,bottom:0,left:`${dsp}%`,
                                 width:2,background:day.color,zIndex:6,
                                 boxShadow:`0 0 6px ${day.color}99`}}/>
-                              <div style={{position:"absolute",bottom:"calc(100% + 2px)",left:`${dsp}%`,
-                                transform:"translateX(-50%)",fontSize:8,color:day.color,fontWeight:700,
-                                background:"#080c12",padding:"1px 4px",borderRadius:2,
+                              {/* Duty start label — below row, right-anchored to line */}
+                              <div style={{position:"absolute",top:"calc(100% + 3px)",left:`${dsp}%`,
+                                transform:"translateX(-2px)",fontSize:7,color:day.color,fontWeight:700,
+                                background:"#080c12",padding:"1px 3px",borderRadius:2,
                                 whiteSpace:"nowrap",zIndex:7,border:`1px solid ${day.color}44`}}>
-                                {day.duty?.dutyStart}
+                                ▶ {day.duty?.dutyStart}
                               </div>
 
-                              {/* DUTY END — right edge + time label above row */}
+                              {/* DUTY END — right edge */}
                               <div style={{position:"absolute",top:0,bottom:0,left:`${dep}%`,
                                 width:2,background:`${day.color}bb`,zIndex:6}}/>
-                              <div style={{position:"absolute",bottom:"calc(100% + 2px)",left:`${dep}%`,
-                                transform:"translateX(-50%)",fontSize:8,color:`${day.color}cc`,fontWeight:700,
-                                background:"#080c12",padding:"1px 4px",borderRadius:2,
+                              {/* Duty end label — below row, left-anchored to line */}
+                              <div style={{position:"absolute",top:"calc(100% + 3px)",left:`${dep}%`,
+                                transform:"translateX(calc(-100% + 2px))",fontSize:7,color:`${day.color}cc`,fontWeight:700,
+                                background:"#080c12",padding:"1px 3px",borderRadius:2,
                                 whiteSpace:"nowrap",zIndex:7,border:`1px solid ${day.color}33`}}>
-                                {day.duty?.dutyEnd}
-                              </div>
-                              <div style={{position:"absolute",bottom:"calc(100% + 2px)",left:`${dep}%`,
-                                transform:"translateX(-50%)",fontSize:8,color:`${day.color}cc`,fontWeight:700,
-                                background:"#080c12",padding:"1px 4px",borderRadius:2,
-                                whiteSpace:"nowrap",zIndex:7,border:`1px solid ${day.color}44`}}>
-                                {day.duty?.dutyEnd}
+                                {day.duty?.dutyEnd} ◀
                               </div>
 
                               {/* NEAR/OVER DUTY END warning flag */}
@@ -3569,24 +3582,29 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
 
                           {/* NOW line per row */}
                           {nowPct!=null&&<div style={{position:"absolute",top:0,left:`${nowPct}%`,
-                            width:2,height:"100%",background:"#ff4757aa",zIndex:7,
-                            pointerEvents:"none",borderRadius:1}}/>}
+                            width:2,height:"100%",background:"#ff4757cc",zIndex:7,
+                            pointerEvents:"none",borderRadius:1,
+                            boxShadow:"0 0 4px #ff475788"}}>
+                            {/* NOW label top */}
+                            <div style={{position:"absolute",top:0,left:"50%",
+                              transform:"translateX(-50%)",
+                              fontSize:7,color:"#ff4757",fontWeight:700,
+                              background:"#080c12",padding:"0px 3px",borderRadius:2,
+                              whiteSpace:"nowrap",lineHeight:"12px"}}>NOW</div>
+                            {/* NOW label bottom */}
+                            <div style={{position:"absolute",bottom:0,left:"50%",
+                              transform:"translateX(-50%)",
+                              fontSize:7,color:"#ff4757",fontWeight:700,
+                              background:"#080c12",padding:"0px 3px",borderRadius:2,
+                              whiteSpace:"nowrap",lineHeight:"12px"}}>NOW</div>
+                          </div>}
                         </div>
                       </div>;
                     })}
 
                     </div>{/* end rows wrapper */}
 
-                    {/* Axis bottom + NOW label */}
-                    <div style={{display:"flex",gap:6,marginTop:2}}>
-                      <div style={{width:LABEL_W,flexShrink:0}}/>
-                      <div style={{flex:1,position:"relative",height:12}}>
-                        {nowPct!=null&&<div style={{position:"absolute",left:`${nowPct}%`,
-                          transform:"translateX(-50%)",fontSize:8,color:"#ff4757",fontWeight:700}}>
-                          ▲NOW
-                        </div>}
-                      </div>
-                    </div>
+
 
                     {/* Legend */}
                     <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:4,fontSize:8}}>
