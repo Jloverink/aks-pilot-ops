@@ -1939,17 +1939,19 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   // The projected window: same 24h window as actual, but we also check whether
   // upcoming scheduled flights would open a NEW worst-case 24h window.
   // Upper bound = windowStart + 24h (only flights that fit in the SAME window)
-  const projWindowEndMs = nowMs + 24*3600000; // how far forward scheduled flights can fall
+  // +EN-ROUTE projection: only include scheduled flights for TODAY (not tomorrow).
+  // Tomorrow's projection is shown separately in the next-day calc below.
+  // We cap at end of today (23:59 AKST) so tomorrow's legs don't inflate the number.
+  const todayEndMs = dtToMs(todayStr, "23:59");
 
-  // En-route flights are happening NOW — always count them
-  // Scheduled: only count if their departure falls within the current 24h window
   const upcomingSchedSorted = [...scheduled]
     .filter(f=>f.startTaxi&&f.date)
     .sort((a,b)=>(a.date+a.startTaxi).localeCompare(b.date+b.startTaxi));
 
+  // Only today's remaining scheduled legs — flights that haven't departed yet today
   const schedInWindow = upcomingSchedSorted.filter(f=>{
     const ms=dtToMs(f.date,f.startTaxi);
-    return ms && ms>=windowStartMs && ms<=projWindowEndMs;
+    return ms && ms>=nowMs && f.date===todayStr;
   });
   const schedMins = schedInWindow.reduce((s,f)=>s+(f.totalMinutes||0),0);
   const rollingProjected = rolling + enrouteMins + schedMins;
