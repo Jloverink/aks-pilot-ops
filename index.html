@@ -311,7 +311,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.3.1"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.3.2"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -2982,19 +2982,38 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const yesterdayInWin = inWin.filter(f=>f.date<todayStr&&f.startTaxi&&f.totalMinutes>0);
                   const todayInWin     = inWin.filter(f=>f.date===todayStr&&f.totalMinutes>0);
                   // Also count en-route (flying right now)
-                  // For en-route flights: use elapsed time since block-off (counts up live)
-                  // falls back to scheduled duration if no startTaxi
-                  const enrMins = (c.enrouteFlights||[]).reduce((s,f)=>{
-                    if(f.startTaxi && f.date) {
-                      const blockOffMs = new Date(f.date+'T'+f.startTaxi+':00').getTime();
+                  // Compute live elapsed time for en-route flights
+                  // Case 1: actual startTaxi exists (log uploaded) — count from real block-off
+                  // Case 2: no log uploaded — scheduled flight past its schedOff time, count from schedOff
+                  const akNowForEnr = new Date(now);
+                  const akNowHHMMEnr = String(akNowForEnr.getHours()).padStart(2,'0')+':'+String(akNowForEnr.getMinutes()).padStart(2,'0');
+                  const todayStr2 = todayStr; // alias for closure
+
+                  // Real en-route flights (have actual block-off)
+                  const enrActual = (c.enrouteFlights||[]).reduce((s,f)=>{
+                    const offTime = f.startTaxi || f.schedOff;
+                    if(offTime && f.date) {
+                      const blockOffMs = new Date(f.date+'T'+offTime+':00').getTime();
                       const elapsedMins = Math.max(0, (now - blockOffMs) / 60000);
-                      // Cap at scheduled duration + 60min buffer to avoid runaway
-                      const cap = (f.totalMinutes||f._schedDurMins||120) + 60;
+                      const cap = (f._schedDurMins||f.totalMinutes||120) + 60;
                       return s + Math.min(elapsedMins, cap);
                     }
                     return s + (f.totalMinutes||0);
                   }, 0);
-                  const enrMinsRounded = Math.floor(enrMins); // whole minutes for display
+
+                  // Scheduled flights whose schedOff has passed but no actual yet (no log uploaded)
+                  const enrSchedLive = c.todayFlights
+                    .filter(f=>f._status==='scheduled' && f.schedOff && f.schedOff <= akNowHHMMEnr && f._schedDurMins>0)
+                    .reduce((s,f)=>{
+                      const blockOffMs = new Date(todayStr2+'T'+f.schedOff+':00').getTime();
+                      const elapsedMins = Math.max(0, (now - blockOffMs) / 60000);
+                      const cap = (f._schedDurMins||60) + 30; // cap at sched + 30min buffer
+                      return s + Math.min(elapsedMins, cap);
+                    }, 0);
+
+                  const enrMins = enrActual + enrSchedLive;
+                  const enrMinsRounded = Math.floor(enrMins);
+                  const isLiveEstimate = enrSchedLive > 0 && enrActual === 0;
                   const todayFlyingMins = todayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0) + enrMinsRounded;
                   const yesterdayMins  = yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
                   // Nothing interesting to show
@@ -3023,7 +3042,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                       {/* TODAY — actual if available, else scheduled up to NOW */}
                       {(()=>{
                         const todayComp = c.todayFlights.filter(f=>f._status==="completed");
-                        const hasActuals = todayComp.length > 0 || enrMinsRounded > 0;
+                        const hasActuals = todayComp.length > 0 || (enrMinsRounded > 0 && !isLiveEstimate);
                         // Scheduled legs whose schedOff has already passed NOW
                         const akNow = new Date(clockMs);
                         const akNowHHMM = `${String(akNow.getHours()).padStart(2,'0')}:${String(akNow.getMinutes()).padStart(2,'0')}`;
