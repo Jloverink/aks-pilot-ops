@@ -13,17 +13,11 @@
     body { background: #080b0f; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
     html, body, #root { height: 100%; }
     #root { min-height: 100vh; }
-    /* Hide scrollbar on nav */
     nav::-webkit-scrollbar { display: none; }
   </style>
 </head>
 <body>
-  <div id="root">
-    <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#080b0f;color:#4a9eff;font-family:monospace;font-size:13px;letter-spacing:0.1em;flex-direction:column;gap:12px;">
-      <div style="font-size:24px;">✈</div><div>AKS PILOT OPS</div>
-      <div style="font-size:10px;color:#3a5060;">LOADING...</div>
-    </div>
-  </div>
+  <div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#080b0f;color:#4a9eff;font-family:monospace;font-size:13px;flex-direction:column;gap:12px;"><div style="font-size:24px;">✈</div><div>AKS PILOT OPS</div><div style="font-size:10px;color:#3a5060;">LOADING...</div></div></div>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
@@ -333,7 +327,9 @@ const SUPA_HDRS = {
 };
 const sget = async (k) => {
   try {
-    const res = await fetch(`${SUPA_URL}/rest/v1/aks_store?key=eq.${encodeURIComponent(k)}&select=value`, {headers:SUPA_HDRS});
+    // Pass apikey as URL param to avoid CORS header stripping
+    const url = `${SUPA_URL}/rest/v1/aks_store?apikey=${SUPA_KEY}&key=eq.${encodeURIComponent(k)}&select=value`;
+    const res = await fetch(url, {headers:{"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json"}});
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const rows = await res.json();
     if(!rows||!rows.length) return null;
@@ -345,12 +341,12 @@ const sget = async (k) => {
 };
 const sset = async (k,v) => {
   const str = JSON.stringify(v);
-  // Always write localStorage as instant local cache
   try { localStorage.setItem(k, str); } catch{}
-  // Then sync to Supabase
   try {
-    const res = await fetch(`${SUPA_URL}/rest/v1/aks_store`, {
-      method:"POST", headers:SUPA_HDRS,
+    const url = `${SUPA_URL}/rest/v1/aks_store?apikey=${SUPA_KEY}`;
+    const res = await fetch(url, {
+      method:"POST",
+      headers:{"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json","Prefer":"resolution=merge-duplicates"},
       body:JSON.stringify({key:k, value:str, updated_at:new Date().toISOString()})
     });
     if(!res.ok) console.warn("Supabase sset failed:", k, res.status);
@@ -1923,18 +1919,16 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   const nowMs = Date.now(); // true UTC ms, matches dtToMs output
 
   // ── Rolling 8-in-24 (actual) ──────────────────────────────────────────────
-  // Window: 24h back from the latest actual block-off
+  // FAR 135.265: window = 24h rolling back from NOW (current wall clock time).
+  // Flights whose block-off was more than 24 hours ago don't count regardless
+  // of when the pilot last flew. This gives a live countdown that ticks down
+  // as old flights age out of the window in real time.
   const withTimes = completed.filter(f=>f.startTaxi&&f.date);
   const sortedComp = [...withTimes].sort((a,b)=>(a.date+a.startTaxi).localeCompare(b.date+b.startTaxi));
-  let rolling=0, windowStartMs=nowMs-24*3600000;
-  if(sortedComp.length) {
-    const last=sortedComp[sortedComp.length-1];
-    const lastMs=dtToMs(last.date,last.startTaxi);
-    if(lastMs) windowStartMs=lastMs-24*3600000;
-    rolling=sortedComp
-      .filter(f=>{ const ms=dtToMs(f.date,f.startTaxi); return ms&&ms>=windowStartMs; })
-      .reduce((s,f)=>s+(f.totalMinutes||0),0);
-  }
+  const windowStartMs = nowMs - 24*3600000; // always anchored to RIGHT NOW
+  const rolling = sortedComp
+    .filter(f=>{ const ms=dtToMs(f.date,f.startTaxi); return ms&&ms>=windowStartMs; })
+    .reduce((s,f)=>s+(f.totalMinutes||0),0);
 
   // ── Projected rolling 8-in-24 (actual + en-route + scheduled) ─────────────
   const enrouteMins = enroute.reduce((s,f)=>s+(f.totalMinutes||0),0);
@@ -1942,17 +1936,19 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   // The projected window: same 24h window as actual, but we also check whether
   // upcoming scheduled flights would open a NEW worst-case 24h window.
   // Upper bound = windowStart + 24h (only flights that fit in the SAME window)
-  const projWindowEndMs = windowStartMs + 24*3600000;
+  // +EN-ROUTE projection: only include scheduled flights for TODAY (not tomorrow).
+  // Tomorrow's projection is shown separately in the next-day calc below.
+  // We cap at end of today (23:59 AKST) so tomorrow's legs don't inflate the number.
+  const todayEndMs = dtToMs(todayStr, "23:59");
 
-  // En-route flights are happening NOW — always count them
-  // Scheduled: only count if their departure falls within the current 24h window
   const upcomingSchedSorted = [...scheduled]
     .filter(f=>f.startTaxi&&f.date)
     .sort((a,b)=>(a.date+a.startTaxi).localeCompare(b.date+b.startTaxi));
 
+  // Only today's remaining scheduled legs — flights that haven't departed yet today
   const schedInWindow = upcomingSchedSorted.filter(f=>{
     const ms=dtToMs(f.date,f.startTaxi);
-    return ms && ms>=windowStartMs && ms<=projWindowEndMs;
+    return ms && ms>=nowMs && f.date===todayStr;
   });
   const schedMins = schedInWindow.reduce((s,f)=>s+(f.totalMinutes||0),0);
   const rollingProjected = rolling + enrouteMins + schedMins;
@@ -2045,13 +2041,15 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
     if(dayComp.length) {
       const starts = dayComp.map(f=>f.startTaxi).sort();
       const ends   = dayComp.map(f=>f.stopTaxi).sort();
-      // Duty end logic: blanket → 16:30, winter → last landing +30min, else actual span
+      // Duty end: blanket = 20:00, else always dutyStart + 14hrs (FAR 135 max duty period)
+      // Winter mode: last landing +30min (but never more than start+14)
       const blanketAssigned = assigned?.blanket;
-      const dutyStart = blanketAssigned ? "06:30" : starts[0];
+      const dutyStart = blanketAssigned ? "06:00" : starts[0];
       const lastEnd   = ends[ends.length-1];
-      const dutyEnd   = blanketAssigned ? "16:30"
+      const maxDutyEnd = addMinToTime(dutyStart, 14*60);
+      const dutyEnd   = blanketAssigned ? "20:00"
         : (winterMode && lastEnd) ? addMinToTime(lastEnd, 30)
-        : lastEnd;
+        : maxDutyEnd;
       dutyDays[date]={
         dutyStart, dutyEnd,
         dutyMins: calcMin(dutyStart,dutyEnd),
@@ -2066,23 +2064,19 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
     if(daySched.length) {
       let projStart, projEnd;
       if(assigned?.blanket) {
-        projStart = "06:30";
-        projEnd   = "16:30";
+        projStart = "06:00";
+        projEnd   = "20:00"; // blanket always 14hr block 06:00-20:00
       } else if(assigned?.assigned && assigned.dutyStart && assigned.dutyEnd) {
         projStart = assigned.dutyStart;
         projEnd   = assigned.dutyEnd;
       } else {
-        // Auto: first sched departure -1hr
-        // Winter mode: duty end = last landing +30min; else: duty start +14hrs
+        // Auto: 1hr before first flight, always 14hr block from start
         const schedStarts = daySched.map(f=>f.startTaxi).filter(Boolean).sort();
         const schedEnds   = daySched.map(f=>f.stopTaxi||f.schedOn).filter(Boolean).sort();
         if(schedStarts.length) {
           projStart = addMinToTime(schedStarts[0], -60);
-          if(winterMode && schedEnds.length) {
-            projEnd = addMinToTime(schedEnds[schedEnds.length-1], 30);
-          } else {
-            projEnd = addMinToTime(projStart, 14*60);
-          }
+          // Always 14hrs from duty start — winter mode only affects ACTUAL duty end
+          projEnd = addMinToTime(projStart, 14*60);
         }
       }
       if(projStart&&projEnd) {
@@ -2218,18 +2212,18 @@ function Tip({text, children, width=220}) {
 // ── DUTY DAY ASSIGNMENT MODAL ─────────────────────────────────────────────────
 function DutyAssignModal({pilot, date, initial, onSave, onClose}) {
   const pd = initial || {};
-  // mode: 'blanket' = 06:30-20:30 company default | 'auto' = ±1hr first/last | 'custom' = manual
+  // mode: 'blanket' = 06:00-20:00 company default | 'auto' = ±1hr first/last | 'custom' = manual
   const initMode = !pd.assigned ? (pd.blanket ? 'blanket' : 'auto') : 'custom';
   const [mode, setMode] = useState(initMode);
-  const [start, setStart] = useState(pd.dutyStart||"06:30");
-  const [end,   setEnd  ] = useState(pd.dutyEnd||"16:30");
+  const [start, setStart] = useState(pd.dutyStart||"06:00");
+  const [end,   setEnd  ] = useState(pd.dutyEnd||"20:00");
 
-  const dutyMins = mode==='blanket' ? calcMin("06:30","16:30")
+  const dutyMins = mode==='blanket' ? calcMin("06:00","20:00")
                  : mode==='custom' && start&&end ? calcMin(start,end) : 0;
   const col = dutyMins>=840?SC.red:dutyMins>=660?SC.orange:SC.green;
 
   const MODES = [
-    {k:'blanket', label:'BLANKET', sub:'06:30–16:30'},
+    {k:'blanket', label:'BLANKET', sub:'06:00–20:00'},
     {k:'auto',    label:'AUTO',    sub:'±1hr first/last'},
     {k:'custom',  label:'CUSTOM',  sub:'set times'},
   ];
@@ -2255,7 +2249,7 @@ function DutyAssignModal({pilot, date, initial, onSave, onClose}) {
 
       {mode==='blanket'&&<div style={{...S.card,background:"#080d10",padding:12,marginBottom:16,fontSize:11,color:"#7a9ab8",lineHeight:1.6}}>
         Company default duty window:<br/>
-        <span style={{color:"#4a9eff",fontWeight:700}}>06:30 – 20:30</span>
+        <span style={{color:"#4a9eff",fontWeight:700}}>06:00 – 20:00</span>
         <span style={{color:"#7a9ab0",marginLeft:8}}>(14 hours — applied to all days)</span>
       </div>}
       {mode==='auto'&&<div style={{...S.card,background:"#080d10",padding:12,marginBottom:16,fontSize:11,color:"#7a9ab8",lineHeight:1.6}}>
@@ -2283,8 +2277,8 @@ function DutyAssignModal({pilot, date, initial, onSave, onClose}) {
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
         <button onClick={onClose} style={{...S.btn("ghost"),padding:13}}>CANCEL</button>
         <button onClick={()=>onSave(date,{
-            dutyStart: mode==='blanket'?"06:30":mode==='custom'?start:"",
-            dutyEnd:   mode==='blanket'?"16:30":mode==='custom'?end:"",
+            dutyStart: mode==='blanket'?"06:00":mode==='custom'?start:"",
+            dutyEnd:   mode==='blanket'?"20:00":mode==='custom'?end:"",
             assigned:  mode==='custom',
             blanket:   mode==='blanket',
           })} style={{...S.btn("primary"),padding:13}}>SAVE</button>
@@ -2318,7 +2312,7 @@ function DutyBar({dutyStart, dutyEnd, dutyMins, fltMins, flights, assigned, blan
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
       <span style={{fontSize:9,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.08em"}}>
         {label}
-        {blanket&&<span style={{marginLeft:6,fontSize:8,color:"#6a8a9a"}}>blanket 06:30–16:30</span>}
+        {blanket&&<span style={{marginLeft:6,fontSize:8,color:"#6a8a9a"}}>blanket 06:00–20:00</span>}
         {assigned&&<span style={{marginLeft:6,fontSize:8,color:"#4a9eff"}}>✎ assigned</span>}
       </span>
       <span style={{fontSize:10,color:col,fontWeight:700}}>{dutyStart} – {dutyEnd}
@@ -2722,7 +2716,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     </span>
                   </Tip>;
                 })()}
-                <Tip text={"Click to assign duty window for today.\nBLANKET = company default 06:30–20:30\nAUTO = 1hr before/after flights\nCUSTOM = manual times"} width={210}>
+                <Tip text={"Click to assign duty window for today.\nBLANKET = company default 06:00–20:00\nAUTO = 1hr before/after flights\nCUSTOM = manual times"} width={210}>
                   <span onClick={e=>{e.stopPropagation();setAssignDay({username:pd.username,date:todayStr,initial:c.projectedDutyDays[todayStr]});}}
                     style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,cursor:"pointer",
                       background:"rgba(74,158,255,0.1)",color:"#4a9eff",border:"1px solid rgba(74,158,255,0.3)"}}>
@@ -2770,7 +2764,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         <div style={{fontSize:8,color:"#7a9ab8"}}>+en-route</div>
                       </div>
                     : null}
-                <span style={{fontSize:14,color:"#7a9ab8"}}>{isOpen?"▲":"▼"}</span>
+                <span style={{fontSize:16,color:isOpen?"#5aaa8a":"#4a9eff",fontWeight:700,transition:"color 0.15s"}}>{isOpen?"▲":"▼"}</span>
               </div>
             </div>
             {/* Dual progress bars: actual (solid) + projected (faded) */}
@@ -2961,13 +2955,13 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:10}}>
                   <StatCell label="PEAK DUTY" value={c.maxDutyMins?fmtMin(c.maxDutyMins):"—"}
                     color={c.maxDutyMins>=840?SC.red:c.maxDutyMins>=660?SC.orange:"#d0dae8"}
-                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:30–16:30) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the longest day."/>
+                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the longest day."/>
                   <StatCell label="AVG DUTY" value={c.avgDutyMins?fmtMin(c.avgDutyMins):"—"}
                     color="#8aaabb"
-                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:30–16:30) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the average across all duty days."/>
+                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the average across all duty days."/>
                   <StatCell label="SHORTEST DUTY" value={c.minDutyMins?fmtMin(c.minDutyMins):"—"}
                     color="#6a9a7a"
-                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:30–16:30) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the shortest day."/>
+                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the shortest day."/>
                 </div>
 
                 {/* ── PILOT STATS ── */}
@@ -2991,11 +2985,13 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     border:"1px solid #1a2530",overflow:"visible"}}>
                     <div onClick={e=>{e.stopPropagation();setPilotStatsOpen(p=>({...p,[pd.username]:!p[pd.username]}));}}
                       style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                        padding:"7px 10px",cursor:"pointer"}}>
-                      <span style={{fontSize:9,color:"#9abada",fontWeight:700,letterSpacing:"0.1em"}}>
+                        padding:"8px 10px",cursor:"pointer",
+                        borderBottom:pilotStatsOpen[pd.username]?"1px solid #1a2530":"none",
+                        background:"rgba(74,158,255,0.04)",borderRadius:pilotStatsOpen[pd.username]?"6px 6px 0 0":"6px"}}>
+                      <span style={{fontSize:10,color:"#4a9eff",fontWeight:700,letterSpacing:"0.1em"}}>
                         📊 PILOT STATS
                       </span>
-                      <span style={{fontSize:11,color:"#4a6a7a"}}>{showPilotStats?"▼":"▶"}</span>
+                      <span style={{fontSize:13,color:showPilotStats?"#5aaa8a":"#4a9eff",fontWeight:700,transition:"color 0.15s"}}>{showPilotStats?"▼":"▶"}</span>
                     </div>
                     {showPilotStats&&<div style={{padding:"0 10px 10px"}}>
 
@@ -3142,34 +3138,36 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     {label:"TOMORROW",  date:tomorrowStr,  flights:tmrwAll,        duty:tmrwProjDuty,   color:"#aa7adf", isTmrw:true},
                   ];
 
-                  const ROW_H=20;
+                  const ROW_H=32; // taller rows so duty band is clearly visible below flights
+                  const DUTY_H=8;  // duty band height at bottom of each row
+                  const FLIGHT_H=20; // flight block height at top of each row
+                  // Every hour from 04 to 24(00)
+                  const allHourTicks=[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24];
                   const majorTicks=[4,6,8,10,12,14,16,18,20,22,24];
-                  const minorTicks=[5,7,9,11,13,15,17,19,21,23];
 
                   const LABEL_W=64;
 
                   return <div style={{background:"#080c12",borderRadius:6,padding:"10px 10px 8px",
                     marginBottom:10,border:"1px solid #1e2a38"}}>
-                    <div style={{fontSize:10,color:"#8aaabb",fontWeight:700,letterSpacing:"0.1em",marginBottom:8}}>
+                    <div style={{fontSize:10,color:"#8aaabb",fontWeight:700,letterSpacing:"0.1em",marginBottom:6}}>
                       3-DAY DUTY OVERVIEW
                     </div>
 
-                    {/* AXIS */}
-                    <div style={{display:"flex",gap:6,marginBottom:3}}>
+                    {/* AXIS — every hour labeled, full height grid lines */}
+                    <div style={{display:"flex",gap:6,marginBottom:2}}>
                       <div style={{width:LABEL_W,flexShrink:0}}/>
-                      <div style={{flex:1,position:"relative",height:16}}>
-                        {majorTicks.map(h=>{
+                      <div style={{flex:1,position:"relative",height:18}}>
+                        {allHourTicks.map(h=>{
                           const pct=((h*60)-TL_START)/TL_SPAN*100;
                           if(pct<0||pct>100) return null;
-                          return <div key={h} style={{position:"absolute",left:`${pct}%`,transform:"translateX(-50%)",
-                            fontSize:9,color:"#6a8aaa",fontWeight:700}}>
+                          const isMajor=majorTicks.includes(h);
+                          return <div key={h} style={{position:"absolute",left:`${pct}%`,
+                            transform:"translateX(-50%)",
+                            fontSize:isMajor?9:8,
+                            color:isMajor?"#7a9abb":"#3a5060",
+                            fontWeight:isMajor?700:400}}>
                             {h===24?"00":String(h).padStart(2,'0')}
                           </div>;
-                        })}
-                        {minorTicks.map(h=>{
-                          const pct=((h*60)-TL_START)/TL_SPAN*100;
-                          return <div key={h} style={{position:"absolute",bottom:0,left:`${pct}%`,
-                            width:1,height:4,background:"#2a3a4a"}}/>;
                         })}
                       </div>
                     </div>
@@ -3242,12 +3240,14 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         <div style={{flex:1,position:"relative",height:ROW_H,borderRadius:3,
                           background:"#0a0e14",overflow:"visible",cursor:"crosshair"}}>
 
-                          {/* Hour grid lines */}
-                          {majorTicks.map(h=>{
+                          {/* Full-height grid lines for every hour */}
+                          {allHourTicks.map(h=>{
                             const pct=((h*60)-TL_START)/TL_SPAN*100;
                             if(pct<0||pct>100) return null;
+                            const isMajor=majorTicks.includes(h);
                             return <div key={h} style={{position:"absolute",top:0,left:`${pct}%`,
-                              width:1,height:"100%",background:"#131c28",zIndex:0}}/>;
+                              width:1,height:"100%",
+                              background:isMajor?"#1a2a3a":"#111820",zIndex:0}}/>;
                           })}
 
                           {/* TWILIGHT bands — nautical=very dark, civil=medium */}
@@ -3339,12 +3339,27 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                             const overDutyEnd = minsToEndSane!=null && minsToEndSane<0 && minsToEndSane>=-60;
 
                             return <>
-                              {/* Duty band */}
-                              <div style={{position:"absolute",top:1,bottom:1,
+                              {/* Duty band — solid strip at bottom of row, clearly separate from flight blocks */}
+                              <div style={{position:"absolute",bottom:0,height:DUTY_H,
                                 left:`${dsp}%`,width:`${dep-dsp}%`,
                                 background:grad,
-                                border:`1px solid rgba(255,255,255,0.12)`,
-                                borderRadius:2,zIndex:2}}/>
+                                border:`1px solid rgba(255,255,255,0.15)`,
+                                borderRadius:2,zIndex:2}}>
+                                {/* DUTY START time label */}
+                                <div style={{position:"absolute",top:"50%",left:3,
+                                  transform:"translateY(-50%)",
+                                  fontSize:7,color:"rgba(255,255,255,0.7)",fontWeight:700,
+                                  whiteSpace:"nowrap",pointerEvents:"none"}}>
+                                  {day.duty?.dutyStart}
+                                </div>
+                                {/* DUTY END time label */}
+                                <div style={{position:"absolute",top:"50%",right:3,
+                                  transform:"translateY(-50%)",
+                                  fontSize:7,color:"rgba(255,255,255,0.7)",fontWeight:700,
+                                  whiteSpace:"nowrap",pointerEvents:"none"}}>
+                                  {day.duty?.dutyEnd}
+                                </div>
+                              </div>
 
                               {/* Zone tick lines inside band */}
                               {p8h<100&&<div style={{position:"absolute",top:1,bottom:1,
@@ -3354,20 +3369,14 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                                 left:`calc(${dsp}% + ${dep-dsp}% * ${p12h/100})`,
                                 width:1,background:"rgba(255,109,0,0.5)",zIndex:3}}/>}
 
-                              {/* DUTY START — bright solid line with label above */}
-                              <div style={{position:"absolute",top:0,left:`${dsp}%`,
-                                width:2,height:"100%",background:day.color,zIndex:6,borderRadius:1,
+                              {/* DUTY START — bright marker line at bottom strip */}
+                              <div style={{position:"absolute",bottom:0,left:`${dsp}%`,
+                                width:2,height:DUTY_H,background:day.color,zIndex:6,borderRadius:1,
                                 boxShadow:`0 0 4px ${day.color}88`}}/>
-                              <div style={{position:"absolute",bottom:"calc(100% + 2px)",left:`${dsp}%`,
-                                transform:"translateX(-50%)",fontSize:8,color:day.color,fontWeight:700,
-                                background:"#080c12",padding:"1px 4px",borderRadius:2,
-                                whiteSpace:"nowrap",zIndex:7,border:`1px solid ${day.color}55`}}>
-                                {day.duty?.dutyStart}
-                              </div>
 
-                              {/* DUTY END — solid line with label above */}
-                              <div style={{position:"absolute",top:0,left:`${dep}%`,
-                                width:2,height:"100%",background:`${day.color}99`,zIndex:6,borderRadius:1}}/>
+                              {/* DUTY END — marker line at bottom strip */}
+                              <div style={{position:"absolute",bottom:0,left:`${dep}%`,
+                                width:2,height:DUTY_H,background:`${day.color}99`,zIndex:6,borderRadius:1}}/>
                               <div style={{position:"absolute",bottom:"calc(100% + 2px)",left:`${dep}%`,
                                 transform:"translateX(-50%)",fontSize:8,color:`${day.color}cc`,fontWeight:700,
                                 background:"#080c12",padding:"1px 4px",borderRadius:2,
@@ -3541,7 +3550,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                           </span>;
                         })()}
                       </span>
-                      <span style={{fontSize:12,color:"#6a8aaa"}}>{getSection(pd.username,day.key,day.defaultOpen)?"▼":"▶"}</span>
+                      <span style={{fontSize:13,color:getSection(pd.username,day.key,day.defaultOpen)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,day.key,day.defaultOpen)?"▼":"▶"}</span>
                     </div>
                     {getSection(pd.username,day.key,day.defaultOpen)&&<div style={{background:"#060a0e",borderRadius:4,padding:"6px 8px",marginTop:3}}>
                       {day.dutyBar&&<DutyBar {...day.dutyBar} flights={day.compFlights}/>}
@@ -3634,7 +3643,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         window: {msToLocalHHMM(c.windowStartMs)} → {msToLocalHHMM(c.windowStartMs+86400000)}
                       </span>
                     </div>
-                    <span style={{fontSize:12,color:"#6a8aaa"}}>{getSection(pd.username,'rolling',false)?"▼":"▶"}</span>
+                    <span style={{fontSize:13,color:getSection(pd.username,'rolling',false)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,'rolling',false)?"▼":"▶"}</span>
                   </div>
                   {getSection(pd.username,'rolling',false)&&<div style={{padding:"0 10px 8px"}}>
                     {c.rolling>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:"1px solid #1a2530",fontSize:11}}>
@@ -3684,7 +3693,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                 </span>
                 <div style={{display:"flex",alignItems:"center",gap:6}}>
                   <span style={{fontSize:8,color:"#5a6a7a"}}>via Pilot Status Board</span>
-                  <span style={{fontSize:11,color:"#6a8a9a"}}>{getSection(pd.username,'certs',false)?"▼":"▶"}</span>
+                  <span style={{fontSize:13,color:getSection(pd.username,'certs',false)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,'certs',false)?"▼":"▶"}</span>
                 </div>
               </div>
               {getSection(pd.username,'certs',false)&&<>
@@ -3697,14 +3706,14 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
               </div>}
 
               {/* Items by category */}
-              {["medical","checkride","aircraft","training","approach"].map(cat=>{
+              {["medical","kal_checkride","kal_aircraft","kal_training","airx_checkride","airx_aircraft","airx_training","training","approach"].map(cat=>{
                 const catItems = cat==="approach"
                   ? [...(crewData?.kalinin?.[cw.pilot.name]||[]),...(crewData?.airx?.[cw.pilot.name]||[])].map(a=>({
                       label:`[${a.airport||"?"}] ${a.approach}`, days:a.days, status:a.status, category:"approach"
                     }))
                   : Object.values(cw.pilot.items).filter(i=>i.category===cat);
                 if(!catItems.length) return null;
-                const catLabel={medical:"MEDICAL",checkride:"CHECK RIDES",aircraft:"AIRCRAFT CURRENCY",training:"TRAINING",approach:"SPECIAL APPROACHES"}[cat];
+                const catLabel={medical:"MEDICAL",kal_checkride:"KALININ CHECK RIDES",kal_aircraft:"KALININ AIRCRAFT",kal_training:"KALININ TRAINING",airx_checkride:"AIR X CHECK RIDES",airx_aircraft:"AIR X AIRCRAFT",airx_training:"AIR X TRAINING",training:"SHARED TRAINING",approach:"SPECIAL APPROACHES"}[cat]||cat;
                 const catHasRed = catItems.some(i=>i.status==="red");
                 const catHasOrange = catItems.some(i=>i.status==="orange");
                 return <div key={cat} style={{marginBottom:8}}>
@@ -4025,33 +4034,75 @@ const COL = {
 
 // Human-readable labels for each column
 const COL_LABELS = {
-  medical:    { label:"Medical",            category:"medical"   },
-  recGndSea:  { label:"Rec Gnd Seaplanes",  category:"training"  },
-  recGndAirX: { label:"Rec Gnd Air X",      category:"training"  },
-  sel293:     { label:"SEL §135.293",        category:"checkride" },
-  ses293:     { label:"SES §135.293",        category:"checkride" },
-  p299:       { label:"§135.299",            category:"checkride" },
-  seaCA:      { label:"Seaplanes CA",        category:"checkride" },
-  seaIP:      { label:"Seaplanes IP",        category:"checkride" },
-  airxCA:     { label:"Air X CA",            category:"checkride" },
-  airxIP:     { label:"Air X IP",            category:"checkride" },
-  c208Boot:   { label:"C208 Boot Ice",       category:"aircraft"  },
-  c208Tks:    { label:"C208 TKS Ice",        category:"aircraft"  },
-  c208Ifr:    { label:"C208 §135.297 IFR",   category:"aircraft"  },
-  pc12Ifr:    { label:"PC-12 §135.297 IFR",  category:"aircraft"  },
-  pc12_293:   { label:"PC-12 §135.293",      category:"aircraft"  },
-  pc12_299:   { label:"PC-12 §135.299",      category:"aircraft"  },
-  seaCfit:    { label:"Seaplanes CFIT",      category:"training"  },
-  airxCfit:   { label:"Air X CFIT",          category:"training"  },
-  hazmat:     { label:"HazMat",              category:"training"  },
+  // ── MEDICAL ──────────────────────────────────────────────────────────────────
+  medical:    { label:"Medical",                             category:"medical"       },
+
+  // ── KALININ AVIATION (Seaplanes cert) ────────────────────────────────────────
+  recGndSea:  { label:"Recurrent Ground",                   category:"kal_training"  },
+  sel293:     { label:"SEL §135.293 (VFR Land)",            category:"kal_checkride" },
+  ses293:     { label:"SES §135.293 (VFR Float)",           category:"kal_checkride" },
+  p299:       { label:"§135.299 Line Check",                category:"kal_checkride" },
+  seaCA:      { label:"Check Airman (train + checkrides)",  category:"kal_checkride" },
+  seaIP:      { label:"Instructor Pilot (train only)",      category:"kal_checkride" },
+  c208Boot:   { label:"C208 Boot Ice",                      category:"kal_aircraft"  },
+  c208Tks:    { label:"C208 TKS Ice",                       category:"kal_aircraft"  },
+  c208Ifr:    { label:"C208 §135.297 IFR",                  category:"kal_aircraft"  },
+  seaCfit:    { label:"CFIT Training",                      category:"kal_training"  },
+
+  // ── AIR EXCURSIONS (PC-12 cert) ───────────────────────────────────────────────
+  recGndAirX: { label:"Recurrent Ground",                   category:"airx_training" },
+  airxCA:     { label:"Check Airman (train + checkrides)",  category:"airx_checkride"},
+  airxIP:     { label:"Instructor Pilot (train only)",      category:"airx_checkride"},
+  pc12Ifr:    { label:"PC-12 §135.297 IFR",                 category:"airx_aircraft" },
+  pc12_293:   { label:"PC-12 §135.293",                     category:"airx_aircraft" },
+  pc12_299:   { label:"PC-12 §135.299 Line Check",          category:"airx_aircraft" },
+  pc12_47:    { label:"PC-12 §135.347",                     category:"airx_aircraft" },
+  pc12_45:    { label:"PC-12 §135.345",                     category:"airx_aircraft" },
+  airxCfit:   { label:"CFIT Training",                      category:"airx_training" },
+
+  // ── SHARED ────────────────────────────────────────────────────────────────────
+  hazmat:     { label:"HazMat",                             category:"training"      },
 };
 
 const CAT_COLORS = {
-  medical:   "#ff4757",
-  checkride: "#ffa502",
-  aircraft:  "#4a9eff",
-  training:  "#a29bfe",
+  medical:       "#ff4757",
+  // Kalinin Aviation — teal family
+  kal_checkride: "#00cec9",
+  kal_aircraft:  "#55efc4",
+  kal_training:  "#81ecec",
+  // Air Excursions — blue/gold family
+  airx_checkride:"#4a9eff",
+  airx_aircraft: "#fdcb6e",
+  airx_training: "#a29bfe",
+  // Shared
+  checkride:     "#ffa502",
+  aircraft:      "#4a9eff",
+  training:      "#a29bfe",
 };
+
+// Cert group display config
+const CERT_GROUPS = [
+  {
+    id: "kalinin",
+    label: "KALININ AVIATION",
+    subtitle: "dba Alaska Seaplanes · Seaplanes cert",
+    color: "#00cec9",
+    bg: "rgba(0,206,201,0.08)",
+    border: "rgba(0,206,201,0.25)",
+    cats: ["kal_checkride","kal_aircraft","kal_training"],
+    catLabels: {kal_checkride:"CHECK RIDES & TRAINING AUTHORITY", kal_aircraft:"AIRCRAFT CURRENCY", kal_training:"RECURRENT TRAINING"},
+  },
+  {
+    id: "airx",
+    label: "AIR EXCURSIONS",
+    subtitle: "dba Alaska Seaplanes · PC-12 cert",
+    color: "#4a9eff",
+    bg: "rgba(74,158,255,0.08)",
+    border: "rgba(74,158,255,0.25)",
+    cats: ["airx_checkride","airx_aircraft","airx_training"],
+    catLabels: {airx_checkride:"CHECK RIDES & TRAINING AUTHORITY", airx_aircraft:"AIRCRAFT CURRENCY", airx_training:"RECURRENT TRAINING"},
+  },
+];
 
 const MONTHS_MAP = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
 
@@ -4384,7 +4435,7 @@ function CrewScreen({ crewData, onSync, onUploadXlsx, syncing, lastSync, sheetEr
 
     {/* Category filter */}
     <div style={{display:"flex",gap:3,marginBottom:10,flexWrap:"wrap"}}>
-      {[["all","ALL"],["medical","MED"],["checkride","CHECKS"],["aircraft","ACFT"],["training","TRAIN"],["approaches","APPR"]].map(([k,l])=>(
+      {[["all","ALL"],["medical","MED"],["kal_checkride","KAL CHK"],["airx_checkride","AIR X CHK"],["kal_aircraft","KAL ACFT"],["airx_aircraft","AIR X ACFT"],["training","TRAIN"],["approaches","APPR"]].map(([k,l])=>(
         <button key={k} onClick={()=>setCatFilter(k)}
           style={{padding:"4px 8px",borderRadius:4,fontFamily:"'JetBrains Mono',monospace",
             border:`1px solid ${catFilter===k?"#4a9eff":"#1e2730"}`,
@@ -4445,30 +4496,84 @@ function CrewScreen({ crewData, onSync, onUploadXlsx, syncing, lastSync, sheetEr
                 )}
               </div>
             </div>}
-            {["medical","checkride","aircraft","training"].map(cat=>{
-              const catItems=Object.entries(p.items).filter(([k,v])=>v.category===cat);
-              if(!catItems.length) return null;
-              const catLabel={medical:"MEDICAL",checkride:"CHECK RIDES",aircraft:"AIRCRAFT CURRENCY",training:"TRAINING"}[cat];
-              return <div key={cat} style={{marginBottom:10}}>
-                <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.1em",color:CAT_COLORS[cat],marginBottom:5}}>{catLabel}</div>
-                {catItems.map(([k,item])=>{
+            {/* Medical first */}
+            {(()=>{
+              const medItems=Object.entries(p.items).filter(([k,v])=>v.category==="medical");
+              if(!medItems.length) return null;
+              return <div style={{marginBottom:10}}>
+                <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.1em",color:"#ff4757",marginBottom:5}}>MEDICAL</div>
+                {medItems.map(([k,item])=>{
                   const c=SC[item.status]||SC.green;
-                  const {daysStr,flair} = formatCertItem(item);
+                  const {daysStr,flair}=formatCertItem(item);
                   return <div key={k} style={{padding:"4px 0",borderBottom:"1px solid #0d1117"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10}}>
                       <span style={{color:"#b8c8d8"}}>{item.label}</span>
                       <div style={{display:"flex",alignItems:"center",gap:5}}>
-                        {flair&&<span style={{fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3,
-                          color:flair.color,background:flair.bg,border:`1px solid ${flair.color}44`,whiteSpace:"nowrap"}}>
-                          {flair.text}
-                        </span>}
+                        {flair&&<span style={{fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3,color:flair.color,background:flair.bg,border:`1px solid ${flair.color}44`,whiteSpace:"nowrap"}}>{flair.text}</span>}
                         <span style={{fontWeight:700,color:c}}>{daysStr}</span>
                       </div>
                     </div>
                   </div>;
                 })}
               </div>;
+            })()}
+
+            {/* Cert groups: Kalinin then Air Excursions */}
+            {CERT_GROUPS.map(grp=>{
+              const grpItems = grp.cats.flatMap(cat=>Object.entries(p.items).filter(([k,v])=>v.category===cat));
+              if(!grpItems.length) return null;
+              return <div key={grp.id} style={{marginBottom:12,borderRadius:6,border:`1px solid ${grp.border}`,
+                background:grp.bg,padding:"8px 10px"}}>
+                {/* Cert banner */}
+                <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:8}}>
+                  <span style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:grp.color}}>{grp.label}</span>
+                  <span style={{fontSize:8,color:grp.color,opacity:0.6}}>{grp.subtitle}</span>
+                </div>
+                {grp.cats.map(cat=>{
+                  const catItems=Object.entries(p.items).filter(([k,v])=>v.category===cat);
+                  if(!catItems.length) return null;
+                  return <div key={cat} style={{marginBottom:8}}>
+                    <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.08em",color:CAT_COLORS[cat],
+                      marginBottom:4,opacity:0.9}}>{grp.catLabels[cat]}</div>
+                    {catItems.map(([k,item])=>{
+                      const c=SC[item.status]||SC.green;
+                      const {daysStr,flair}=formatCertItem(item);
+                      return <div key={k} style={{padding:"4px 0",borderBottom:`1px solid ${grp.border}`}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10}}>
+                          <span style={{color:"#c0d0e0"}}>{item.label}</span>
+                          <div style={{display:"flex",alignItems:"center",gap:5}}>
+                            {flair&&<span style={{fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3,color:flair.color,background:flair.bg,border:`1px solid ${flair.color}44`,whiteSpace:"nowrap"}}>{flair.text}</span>}
+                            <span style={{fontWeight:700,color:c,whiteSpace:"nowrap"}}>{daysStr}</span>
+                          </div>
+                        </div>
+                      </div>;
+                    })}
+                  </div>;
+                })}
+              </div>;
             })}
+
+            {/* Shared training items (HazMat etc) */}
+            {(()=>{
+              const sharedItems=Object.entries(p.items).filter(([k,v])=>v.category==="training");
+              if(!sharedItems.length) return null;
+              return <div style={{marginBottom:10}}>
+                <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.1em",color:"#a29bfe",marginBottom:5}}>SHARED TRAINING</div>
+                {sharedItems.map(([k,item])=>{
+                  const c=SC[item.status]||SC.green;
+                  const {daysStr,flair}=formatCertItem(item);
+                  return <div key={k} style={{padding:"4px 0",borderBottom:"1px solid #0d1117"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10}}>
+                      <span style={{color:"#b8c8d8"}}>{item.label}</span>
+                      <div style={{display:"flex",alignItems:"center",gap:5}}>
+                        {flair&&<span style={{fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3,color:flair.color,background:flair.bg,border:`1px solid ${flair.color}44`,whiteSpace:"nowrap"}}>{flair.text}</span>}
+                        <span style={{fontWeight:700,color:c}}>{daysStr}</span>
+                      </div>
+                    </div>
+                  </div>;
+                })}
+              </div>;
+            })()}
             {(pilotKalinin.length>0||pilotAirX.length>0)&&<div>
               <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.1em",color:"#74b9ff",marginBottom:5}}>SPECIAL APPROACHES</div>
               {[["KALININ",pilotKalinin],["AIR X",pilotAirX]].map(([label,apprList])=>
@@ -4537,10 +4642,10 @@ function CrewScreen({ crewData, onSync, onUploadXlsx, syncing, lastSync, sheetEr
                   )}
                 </div>
               </div>}
-              {["medical","checkride","aircraft","training"].map(cat=>{
+              {["medical","kal_checkride","kal_aircraft","kal_training","airx_checkride","airx_aircraft","airx_training","training"].map(cat=>{
                 const catItems=Object.entries(p.items).filter(([k,v])=>v.category===cat);
                 if(!catItems.length) return null;
-                const catLabel={medical:"MEDICAL",checkride:"CHECK RIDES",aircraft:"AIRCRAFT CURRENCY",training:"TRAINING"}[cat];
+                const catLabel={medical:"MEDICAL",kal_checkride:"KALININ CHECK RIDES",kal_aircraft:"KALININ AIRCRAFT",kal_training:"KALININ TRAINING",airx_checkride:"AIR X CHECK RIDES",airx_aircraft:"AIR X AIRCRAFT",airx_training:"AIR X TRAINING",training:"SHARED TRAINING"}[cat]||cat;
                 return <div key={cat} style={{marginBottom:8}}>
                   <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.1em",color:"#6a8a9a",marginBottom:4}}>{catLabel}</div>
                   {catItems.map(([k,item])=>(
@@ -7272,11 +7377,11 @@ function App() {
   const [dismissed,setDismissed]=useState(new Set());
 
   useEffect(()=>{
-    Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)]).then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
+    Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)])
+    .then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
       setFlights(f||[]);
       setProfile(p||{name:"",defaultDutyType:"scheduled"});
       setDuties(d||[]);
-      // Patch company from authoritative COMPANY_MAP regardless of what's cached
       const patchedFleet = {};
       Object.entries(fl||{}).forEach(([u,pd])=>{
         patchedFleet[u] = {...pd, office: pilotCompany(u)};
@@ -7289,9 +7394,13 @@ function App() {
       if(sp) setSpiderRows(sp);
       if(ra) setRouteAvgs(ra);
       if(ql) setQualsData(ql);
-      sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); });
+      sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); }).catch(()=>{});
       setLoaded(true);
       if(!p?.name)setShowProfile(true);
+    })
+    .catch(err=>{
+      console.error('Storage load error:', err);
+      setLoaded(true); // always show app even if storage fails
     });
   },[]);
 
