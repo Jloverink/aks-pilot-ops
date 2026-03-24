@@ -314,7 +314,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.4.7"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.4.8"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -2974,171 +2974,111 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                 })()}
                 {!tmrwSorted.length&&<div style={{marginBottom:10}}/>}
 
-                {/* Row 4: Rolling 8-in-24 */}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:10}}>
-                  <StatCell label="8-IN-24" value={fmtMin(c.rolling)} color={SC[c.status]||SC.green}
-                  tip="Total actual block time in the rolling 24-hour window.\nAnchored to current wall clock — old flights age out automatically.\nPart 135 limit: 8:00 hours."/>
-                  <StatCell label="+EN-ROUTE" value={fmtMin(c.rollingProjected)} color={col}
-                  tip={`8-in-24 actual PLUS any en-route flights still in progress.\nThis is what the rolling total will be once current flight(s) land.\nCurrently adding: ${fmtMin(c.rollingProjected-c.rolling)} for en-route leg(s).`}/>
-                  <StatCell label="REMAINING"   value={fmtMin(Math.max(0,480-c.rollingProjected))} color={c.rollingProjected>=480?SC.red:SC.green}
-                  tip="How much flight time remains before hitting the 8-hour Part 135 limit.\nIncludes en-route flights already in progress."/>
-                  <StatCell label="QTR TOTAL"   value={c.q1Hrs.toFixed(1)+"h"} color={c.q1Hrs>=470?SC.red:c.q1Hrs>=420?SC.orange:"#d0dae8"}
-                  tip="Actual block hours this calendar quarter (Jan-Mar, Apr-Jun, etc).\nPart 135 quarterly limit: 500 hours."/>
-                </div>
-                {/* Live 8-in-24 breakdown banner */}
+                {/* Consolidated 8-in-24 live block */}
                 {(()=>{
                   const now = clockMs;
-                  const wallSec = Math.floor(now/1000)%60; // wall clock second — both timers sync to this
+                  const wallSec = Math.floor(now/1000)%60;
                   const inWin = c.inWindowFlights||[];
-                  // Split window flights into yesterday vs today
                   const yesterdayInWin = inWin.filter(f=>f.date<todayStr&&f.startTaxi&&f.totalMinutes>0);
                   const todayInWin     = inWin.filter(f=>f.date===todayStr&&f.totalMinutes>0);
-                  // Also count en-route (flying right now)
-                  // Compute live elapsed time for en-route flights
-                  // Case 1: actual startTaxi exists (log uploaded) — count from real block-off
-                  // Case 2: no log uploaded — scheduled flight past its schedOff time, count from schedOff
                   const akNowForEnr = new Date(now);
                   const akNowHHMMEnr = String(akNowForEnr.getHours()).padStart(2,'0')+':'+String(akNowForEnr.getMinutes()).padStart(2,'0');
-                  const todayStr2 = todayStr; // alias for closure
-
-                  // Real en-route flights (have actual block-off)
+                  const todayStr2 = todayStr;
                   const enrActual = (c.enrouteFlights||[]).reduce((s,f)=>{
-                    const offTime = f.startTaxi || f.schedOff;
-                    if(offTime && f.date) {
-                      const blockOffMs = new Date(f.date+'T'+offTime+':00').getTime();
-                      const elapsedMins = Math.max(0, (now - blockOffMs) / 60000);
-                      const cap = (f._schedDurMins||f.totalMinutes||120) + 60;
-                      return s + Math.min(elapsedMins, cap);
+                    const offTime = f.startTaxi||f.schedOff;
+                    if(offTime&&f.date){
+                      const bMs=new Date(f.date+'T'+offTime+':00').getTime();
+                      const el=Math.max(0,(now-bMs)/60000);
+                      return s+Math.min(el,(f._schedDurMins||f.totalMinutes||120)+60);
                     }
-                    return s + (f.totalMinutes||0);
-                  }, 0);
-
-                  // Scheduled flights whose schedOff has passed but no actual yet (no log uploaded)
+                    return s+(f.totalMinutes||0);
+                  },0);
                   const enrSchedLive = c.todayFlights
-                    .filter(f=>f._status==='scheduled' && f.schedOff && f.schedOff <= akNowHHMMEnr && f._schedDurMins>0)
+                    .filter(f=>f._status==='scheduled'&&f.schedOff&&f.schedOff<=akNowHHMMEnr&&f._schedDurMins>0)
                     .reduce((s,f)=>{
-                      const schedBlockOffMs = new Date(todayStr2+'T'+f.schedOff+':00').getTime();
-                      const schedElapsedMins = Math.max(0, (now - schedBlockOffMs) / 60000);
-                      const schedCap = (f._schedDurMins||60) + 30;
-                      return s + Math.min(schedElapsedMins, schedCap);
-                    }, 0);
-
-                  const enrMins = enrActual + enrSchedLive;
-                  const enrTotalSecs = Math.floor(enrMins * 60);
-                  const enrMinsRounded = Math.floor(enrTotalSecs / 60);
-                  const enrSecsOnly = wallSec; // sync to wall clock second — ticks with ERASES IN
-                  const isLiveEstimate = enrSchedLive > 0 && enrActual === 0;
-                  const isEnrLive = enrTotalSecs > 0;
-                  const todayCompletedMins = todayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
-                  const todayFlyingMins = todayCompletedMins + enrMinsRounded;
-                  const yesterdayMins  = yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
-                  // Nothing interesting to show
-                  if(!yesterdayMins && !todayFlyingMins) return null;
-                  // Countdown to when oldest yesterday flight erases
-                  let msLeft = null, hLeft=0, mLeft=0, sLeft=0;
-                  if(yesterdayInWin.length) {
-                    const oldest = yesterdayInWin[0];
-                    const agesOutMs = new Date(oldest.date+'T'+oldest.startTaxi+':00').getTime()+24*3600000;
-                    msLeft = agesOutMs - now;
-                    if(msLeft > 0) {
-                      const totalSecs = Math.floor(msLeft/1000);
-                      hLeft = Math.floor(totalSecs/3600);
-                      mLeft = Math.floor((totalSecs%3600)/60);
-                      sLeft = (60 - wallSec) % 60; // sync to wall clock second
-                    } else { msLeft = null; }
+                      const sBMs=new Date(todayStr2+'T'+f.schedOff+':00').getTime();
+                      const sEl=Math.max(0,(now-sBMs)/60000);
+                      return s+Math.min(sEl,(f._schedDurMins||60)+30);
+                    },0);
+                  const enrMins=enrActual+enrSchedLive;
+                  const enrTotalSecs=Math.floor(enrMins*60);
+                  const enrMinsRounded=Math.floor(enrTotalSecs/60);
+                  const enrSecsOnly=wallSec;
+                  const isLiveEstimate=enrSchedLive>0&&enrActual===0;
+                  const isEnrLive=enrTotalSecs>0;
+                  const todayCompletedMins=todayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
+                  const todayFlyingMins=todayCompletedMins+enrMinsRounded;
+                  const yesterdayMins=yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
+                  // Erases countdown
+                  let msLeft=null,hLeft=0,mLeft=0,sLeft=0;
+                  if(yesterdayInWin.length){
+                    const oldest=yesterdayInWin[0];
+                    const agesOutMs=new Date(oldest.date+'T'+oldest.startTaxi+':00').getTime()+24*3600000;
+                    msLeft=agesOutMs-now;
+                    if(msLeft>0){
+                      const ts=Math.floor(msLeft/1000);
+                      hLeft=Math.floor(ts/3600);
+                      mLeft=Math.floor((ts%3600)/60);
+                      sLeft=(60-wallSec)%60;
+                    } else { msLeft=null; }
                   }
-                  const totalLive = todayFlyingMins + yesterdayMins;
-                  const limitMins = 480;
-                  const barPct = Math.min(totalLive/limitMins*100,100);
-                  const barCol = totalLive>=limitMins?SC.red:totalLive>=390?SC.orange:totalLive>=300?"#ffd740":SC.green;
-                  return <div style={{
-                    background:"rgba(10,18,28,0.8)",border:`1px solid ${barCol}44`,
-                    borderRadius:6,padding:"10px 12px",marginBottom:10}}>
-                    {/* Three column layout: TODAY | YESTERDAY | ERASES IN */}
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1px 1fr 1px 1fr",gap:0,marginBottom:8,alignItems:"center"}}>
-                      {/* TODAY — actual if available, else scheduled up to NOW */}
-                      {(()=>{
-                        const todayComp = c.todayFlights.filter(f=>f._status==="completed");
-                        const hasActuals = todayComp.length > 0 || (enrMinsRounded > 0 && !isLiveEstimate);
-                        // Scheduled legs whose schedOff has already passed NOW
-                        const akNow = new Date(clockMs);
-                        const akNowHHMM = `${String(akNow.getHours()).padStart(2,'0')}:${String(akNow.getMinutes()).padStart(2,'0')}`;
-                        const schedPastNow = c.todayFlights.filter(f=>
-                          f._status==="scheduled" && f.schedOff && f.schedOff<=akNowHHMM && f._schedDurMins>0
-                        );
-                        const schedEstMins = schedPastNow.reduce((s,f)=>s+(f._schedDurMins||0),0);
-                        const displayMins = todayFlyingMins || (schedEstMins>0?schedEstMins:0);
-                        const isEstimate = !hasActuals && schedEstMins>0;
-                        const legsLabel = hasActuals
-                          ? `${todayComp.length} flown${enrMins>0?" + en-route":""}`
-                          : schedEstMins>0
-                            ? `${schedPastNow.length} legs (sched)`
-                            : "no flights yet";
-                        const showSecs = isEnrLive && enrSecsOnly >= 0;
-                        const liveH = Math.floor(displayMins/60);
-                        const liveM = Math.floor(displayMins%60);
-                        const liveS = showSecs ? enrSecsOnly : 0;
-                        return <div style={{textAlign:"center",padding:"0 8px"}}>
-                          <div style={{fontSize:9,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.08em",marginBottom:3}}>
-                            TODAY {isEstimate?"ESTIMATE":"FLOWN"}
-                          </div>
-                          <div style={{fontWeight:700,
-                            color:isEstimate?"#a29bfe":"#4a9eff",
-                            fontFamily:"monospace",lineHeight:1,
-                            fontSize:showSecs?16:20}}>
-                            {showSecs
-                              ? `${liveH}:${String(liveM).padStart(2,'0')}:${String(liveS).padStart(2,'0')}`
-                              : (fmtMin(displayMins)||"—")}
-                            {isEnrLive&&<span style={{fontSize:9,color:"#ffd740",marginLeft:4}}>▶</span>}
-                            {isEstimate&&<span style={{fontSize:9,color:"#a29bfe",marginLeft:3}}>~</span>}
-                          </div>
-                          <div style={{fontSize:8,marginTop:2,
-                            color:isEstimate?"#6a5a8a":"#3a6a8a"}}>
-                            {legsLabel}
-                          </div>
-                          {isEstimate&&<div style={{fontSize:7,color:"#5a4a7a",marginTop:1}}>
-                            no log uploaded
-                          </div>}
-                        </div>;
-                      })()}
-                      {/* Divider */}
-                      <div style={{background:"#1e2a38",height:40}}/>
-                      {/* YESTERDAY IN WINDOW */}
-                      <div style={{textAlign:"center",padding:"0 8px"}}>
-                        <div style={{fontSize:9,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.08em",marginBottom:3}}>YESTERDAY LEFT</div>
-                        <div style={{fontSize:20,fontWeight:700,color:yesterdayMins>0?"#ff9944":"#3a5060",fontFamily:"monospace",lineHeight:1}}>
+                  const totalLive=todayFlyingMins+yesterdayMins;
+                  const barCol=totalLive>=480?SC.red:totalLive>=390?SC.orange:totalLive>=300?"#ffd740":SC.green;
+                  // Today display with seconds
+                  const todayComp=c.todayFlights.filter(f=>f._status==="completed");
+                  const akNow2=new Date(clockMs);
+                  const akNowHHMM2=String(akNow2.getHours()).padStart(2,'0')+':'+String(akNow2.getMinutes()).padStart(2,'0');
+                  const schedPastNow=c.todayFlights.filter(f=>f._status==="scheduled"&&f.schedOff&&f.schedOff<=akNowHHMM2&&f._schedDurMins>0);
+                  const schedEstMins=schedPastNow.reduce((s,f)=>s+(f._schedDurMins||0),0);
+                  const hasActuals=todayComp.length>0||(enrMinsRounded>0&&!isLiveEstimate);
+                  const displayMins=todayFlyingMins||(schedEstMins>0?schedEstMins:0);
+                  const isEstimate=!hasActuals&&schedEstMins>0;
+                  const showSecs=isEnrLive&&enrSecsOnly>=0;
+                  const liveH=Math.floor(displayMins/60),liveM=Math.floor(displayMins%60),liveS=showSecs?enrSecsOnly:0;
+                  const todayDisplay=showSecs?`${liveH}:${String(liveM).padStart(2,'0')}:${String(liveS).padStart(2,'0')}`:(fmtMin(displayMins)||"—");
+                  return <div style={{background:"rgba(8,14,22,0.9)",border:`1px solid ${barCol}33`,
+                    borderRadius:6,padding:"8px 10px",marginBottom:8}}>
+                    {/* 7 cells in one row */}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr 1fr 1fr",gap:3,marginBottom:6}}>
+                      <StatCell label="8-IN-24" value={fmtMin(c.rolling)} color={SC[c.status]||SC.green}
+                        tip="Rolling 24hr actual block time. Anchored to wall clock — ages out in real time."/>
+                      <StatCell label="+EN-ROUTE" value={fmtMin(c.rollingProjected)} color={col}
+                        tip={`8-in-24 plus any en-route legs. Currently adding: ${fmtMin(c.rollingProjected-c.rolling)}.`}/>
+                      <StatCell label="REMAINING" value={fmtMin(Math.max(0,480-c.rollingProjected))} color={c.rollingProjected>=480?SC.red:SC.green}
+                        tip="Time remaining before 8-hour Part 135 limit."/>
+                      <StatCell label="QTR TOTAL" value={c.q1Hrs.toFixed(1)+"h"} color={c.q1Hrs>=470?SC.red:c.q1Hrs>=420?SC.orange:"#d0dae8"}
+                        tip="Block hours this quarter. Part 135 limit: 500 hours."/>
+                      <div style={{background:"#0a1018",borderRadius:5,padding:"6px 5px",border:"1px solid #1a2530",textAlign:"center"}}>
+                        <div style={{fontSize:8,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.05em",marginBottom:2}}>
+                          {isEstimate?"TODAY~":"TODAY"}
+                        </div>
+                        <div style={{fontSize:isEnrLive?12:14,fontWeight:700,color:isEstimate?"#a29bfe":"#4a9eff",fontFamily:"monospace",lineHeight:1}}>
+                          {todayDisplay}{isEnrLive&&<span style={{fontSize:8,color:"#ffd740"}}>▶</span>}
+                        </div>
+                      </div>
+                      <div style={{background:"#0a1018",borderRadius:5,padding:"6px 5px",border:"1px solid #1a2530",textAlign:"center"}}>
+                        <div style={{fontSize:8,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.05em",marginBottom:2}}>YEST LEFT</div>
+                        <div style={{fontSize:14,fontWeight:700,color:yesterdayMins>0?"#ff9944":"#3a5060",fontFamily:"monospace",lineHeight:1}}>
                           {yesterdayMins>0?fmtMin(yesterdayMins):"—"}
                         </div>
-                        <div style={{fontSize:8,color:"#3a6a8a",marginTop:2}}>{yesterdayInWin.length} legs still counting</div>
                       </div>
-                      {/* Divider */}
-                      <div style={{background:"#1e2a38",height:40}}/>
-                      {/* ERASES IN countdown */}
-                      <div style={{textAlign:"center",padding:"0 8px"}}>
-                        <div style={{fontSize:9,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.08em",marginBottom:3}}>ERASES IN</div>
-                        {msLeft!==null
-                          ? <div style={{fontSize:20,fontWeight:700,color:"#ffd740",fontFamily:"monospace",lineHeight:1}}>
-                              {hLeft>0?`${hLeft}h ${String(mLeft).padStart(2,'0')}m`:`${String(mLeft).padStart(2,'0')}m ${String(sLeft).padStart(2,'0')}s`}
-                            </div>
-                          : <div style={{fontSize:14,color:"#3a5060",fontFamily:"monospace"}}>—</div>}
-                        <div style={{fontSize:8,color:"#3a6a8a",marginTop:2}}>yesterday clears</div>
+                      <div style={{background:"#0a1018",borderRadius:5,padding:"6px 5px",border:"1px solid #1a2530",textAlign:"center"}}>
+                        <div style={{fontSize:8,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.05em",marginBottom:2}}>ERASES</div>
+                        <div style={{fontSize:msLeft?12:14,fontWeight:700,color:"#ffd740",fontFamily:"monospace",lineHeight:1}}>
+                          {msLeft?`${hLeft>0?hLeft+'h ':''}${String(mLeft).padStart(2,'0')}:${String(sLeft).padStart(2,'0')}`:"—"}
+                        </div>
                       </div>
                     </div>
-                    {/* Combined 8-in-24 bar */}
-                    <div style={{borderTop:"1px solid #1e2a38",paddingTop:7}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                        <span style={{fontSize:9,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.08em"}}>8-IN-24 COMBINED</span>
-                        <span style={{fontSize:13,fontWeight:700,color:barCol,fontFamily:"monospace"}}>{fmtMin(totalLive)}<span style={{fontSize:9,color:"#3a5a6a",fontWeight:400}}> / 8:00</span></span>
+                    {/* Combined bar */}
+                    <div style={{height:4,background:"#1e2730",borderRadius:2,overflow:"hidden",marginBottom:3}}>
+                      <div style={{height:"100%",display:"flex"}}>
+                        <div style={{width:`${Math.min(todayFlyingMins/480*100,100)}%`,background:"#4a9eff",transition:"width 0.5s"}}/>
+                        <div style={{width:`${Math.min(yesterdayMins/480*100,100)}%`,background:"#ff9944",transition:"width 0.5s"}}/>
                       </div>
-                      <div style={{height:6,background:"#1e2730",borderRadius:3,overflow:"hidden"}}>
-                        <div style={{height:"100%",width:`${barPct}%`,background:barCol,borderRadius:3,transition:"width 0.5s"}}/>
-                      </div>
-                      {/* Show today + yesterday breakdown below bar */}
-                      <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#3a5a6a",marginTop:3}}>
-                        <span style={{color:"#4a9eff"}}>▮ {fmtMin(todayFlyingMins)} today</span>
-                        {yesterdayMins>0&&<span style={{color:"#ff9944"}}>▮ {fmtMin(yesterdayMins)} yesterday</span>}
-                        <span>{fmtMin(Math.max(0,limitMins-totalLive))} remaining</span>
-                      </div>
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#3a5a6a"}}>
+                      <span><span style={{color:"#4a9eff"}}>▮</span> today {fmtMin(todayFlyingMins)}{yesterdayMins>0&&<span> <span style={{color:"#ff9944"}}>▮</span> yest {fmtMin(yesterdayMins)}</span>}</span>
+                      <span style={{color:barCol}}>{fmtMin(Math.max(0,480-totalLive))} left</span>
                     </div>
                   </div>;
                 })()}                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
@@ -3449,7 +3389,7 @@ End: ${endReason}`;
                           return <div key={i} style={{position:"absolute",left:`${pct}%`,
                             transform:"translateX(-50%)",
                             fontSize:isMaj?10:8,
-                            color:isMaj?"#4aff8a":"#1a8a4a",
+                            color:isMaj?"#2aaa5a":"#1a7040",
                             fontWeight:isMaj?700:500,
                             userSelect:"none",
                             textShadow:isMaj?"0 0 8px rgba(74,255,138,0.3)":null}}>
