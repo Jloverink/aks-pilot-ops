@@ -311,7 +311,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.2.7"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.2.8"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -2476,6 +2476,7 @@ function getPilotCrewWarnings(fullName, crewData) {
 }
 
 function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, qualsData, winterMode }) {
+  const clockMs = useClock(1000); // live 1-second clock for countdowns and NOW line
   const [selected,   setSelected ] = useState(null);
   const [sortBy,     setSortBy   ] = useState("status");
   const [assignDay,  setAssignDay] = useState(null);
@@ -7491,7 +7492,6 @@ function App() {
   const [winterMode,setWinterMode]=useState(false);
   const [screen2,setScreen2]=useState("crew");
   const winW = useWindowWidth();
-  const clockMs = useClock(1000); // re-render every 1s — used directly in countdown
   const isDesktop = winW >= DESKTOP;
   const [flights,setFlights]=useState([]);
   const [duties,setDuties]=useState([]);
