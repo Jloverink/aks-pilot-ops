@@ -311,7 +311,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.2.6"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.2.7"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -1925,6 +1925,7 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   const completed = sanitized.filter(f=>f._status==="completed");
   const enroute   = sanitized.filter(f=>f._status==="enroute");
   const scheduled = sanitized.filter(f=>f._status==="scheduled");
+  // nowMs is passed in from clockMs so 8-in-24 window updates in real time
   const nowMs = Date.now(); // true UTC ms, matches dtToMs output
 
   // ── Rolling 8-in-24 (actual) ──────────────────────────────────────────────
@@ -2980,10 +2981,9 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const aging = inWin.filter(f=>f.startTaxi&&f.totalMinutes>0);
                   if(!aging.length) return null;
                   const oldest = aging[0];
-                  const agesOutMs = (()=>{
-                    const d=new Date(oldest.date+'T'+oldest.startTaxi+':00');
-                    return d.getTime()-akOff*3600000+24*3600000;
-                  })();
+                  // new Date('YYYY-MM-DDTHH:MM:00') parses as LOCAL time in browser
+                  // .getTime() gives correct UTC ms — just add 24hrs to get when it ages out
+                  const agesOutMs = new Date(oldest.date+'T'+oldest.startTaxi+':00').getTime()+24*3600000;
                   const msLeft = agesOutMs - now;
                   if(msLeft <= 0) return null;
                   const hLeft = Math.floor(msLeft/3600000);
@@ -3190,7 +3190,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
 
                   // NOW line
                   const nowPct=(()=>{
-                    const now=new Date();
+                    const now=new Date(clockMs); // use clockMs so NOW line ticks with clock
                     const ak=new Date(now.getTime()+((now.getUTCMonth()>=2&&now.getUTCMonth()<=10)?-8:-9)*3600000);
                     const p=((ak.getUTCHours()*60+ak.getUTCMinutes())-TL_START)/TL_SPAN*100;
                     return p>=0&&p<=100?p:null;
