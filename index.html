@@ -2762,7 +2762,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         <div style={{fontSize:8,color:"#7a9ab8"}}>+en-route</div>
                       </div>
                     : null}
-                <span style={{fontSize:16,color:isOpen?"#5aaa8a":"#4a9eff",fontWeight:700,transition:"color 0.15s"}}>{isOpen?"▲":"▼"}</span>
+                <span style={{fontSize:14,color:"#7a9ab8"}}>{isOpen?"▲":"▼"}</span>
               </div>
             </div>
             {/* Dual progress bars: actual (solid) + projected (faded) */}
@@ -2983,13 +2983,11 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     border:"1px solid #1a2530",overflow:"visible"}}>
                     <div onClick={e=>{e.stopPropagation();setPilotStatsOpen(p=>({...p,[pd.username]:!p[pd.username]}));}}
                       style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                        padding:"8px 10px",cursor:"pointer",
-                        borderBottom:pilotStatsOpen[pd.username]?"1px solid #1a2530":"none",
-                        background:"rgba(74,158,255,0.04)",borderRadius:pilotStatsOpen[pd.username]?"6px 6px 0 0":"6px"}}>
-                      <span style={{fontSize:10,color:"#4a9eff",fontWeight:700,letterSpacing:"0.1em"}}>
+                        padding:"7px 10px",cursor:"pointer"}}>
+                      <span style={{fontSize:9,color:"#9abada",fontWeight:700,letterSpacing:"0.1em"}}>
                         📊 PILOT STATS
                       </span>
-                      <span style={{fontSize:13,color:showPilotStats?"#5aaa8a":"#4a9eff",fontWeight:700,transition:"color 0.15s"}}>{showPilotStats?"▼":"▶"}</span>
+                      <span style={{fontSize:11,color:"#4a6a7a"}}>{showPilotStats?"▼":"▶"}</span>
                     </div>
                     {showPilotStats&&<div style={{padding:"0 10px 10px"}}>
 
@@ -3548,7 +3546,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                           </span>;
                         })()}
                       </span>
-                      <span style={{fontSize:13,color:getSection(pd.username,day.key,day.defaultOpen)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,day.key,day.defaultOpen)?"▼":"▶"}</span>
+                      <span style={{fontSize:12,color:"#6a8aaa"}}>{getSection(pd.username,day.key,day.defaultOpen)?"▼":"▶"}</span>
                     </div>
                     {getSection(pd.username,day.key,day.defaultOpen)&&<div style={{background:"#060a0e",borderRadius:4,padding:"6px 8px",marginTop:3}}>
                       {day.dutyBar&&<DutyBar {...day.dutyBar} flights={day.compFlights}/>}
@@ -3641,7 +3639,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         window: {msToLocalHHMM(c.windowStartMs)} → {msToLocalHHMM(c.windowStartMs+86400000)}
                       </span>
                     </div>
-                    <span style={{fontSize:13,color:getSection(pd.username,'rolling',false)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,'rolling',false)?"▼":"▶"}</span>
+                    <span style={{fontSize:12,color:"#6a8aaa"}}>{getSection(pd.username,'rolling',false)?"▼":"▶"}</span>
                   </div>
                   {getSection(pd.username,'rolling',false)&&<div style={{padding:"0 10px 8px"}}>
                     {c.rolling>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:"1px solid #1a2530",fontSize:11}}>
@@ -3691,7 +3689,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                 </span>
                 <div style={{display:"flex",alignItems:"center",gap:6}}>
                   <span style={{fontSize:8,color:"#5a6a7a"}}>via Pilot Status Board</span>
-                  <span style={{fontSize:13,color:getSection(pd.username,'certs',false)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,'certs',false)?"▼":"▶"}</span>
+                  <span style={{fontSize:11,color:"#6a8a9a"}}>{getSection(pd.username,'certs',false)?"▼":"▶"}</span>
                 </div>
               </div>
               {getSection(pd.username,'certs',false)&&<>
@@ -7375,11 +7373,11 @@ function App() {
   const [dismissed,setDismissed]=useState(new Set());
 
   useEffect(()=>{
-    Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)])
-    .then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
+    Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)]).then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
       setFlights(f||[]);
       setProfile(p||{name:"",defaultDutyType:"scheduled"});
       setDuties(d||[]);
+      // Patch company from authoritative COMPANY_MAP regardless of what's cached
       const patchedFleet = {};
       Object.entries(fl||{}).forEach(([u,pd])=>{
         patchedFleet[u] = {...pd, office: pilotCompany(u)};
@@ -7392,13 +7390,9 @@ function App() {
       if(sp) setSpiderRows(sp);
       if(ra) setRouteAvgs(ra);
       if(ql) setQualsData(ql);
-      sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); }).catch(()=>{});
+      sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); });
       setLoaded(true);
       if(!p?.name)setShowProfile(true);
-    })
-    .catch(err=>{
-      console.error('Storage load error:', err);
-      setLoaded(true); // always show app even if storage fails
     });
   },[]);
 
