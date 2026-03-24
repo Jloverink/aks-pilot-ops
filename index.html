@@ -17,12 +17,7 @@
   </style>
 </head>
 <body>
-  <div id="root">
-    <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#080b0f;color:#4a9eff;font-family:monospace;font-size:13px;letter-spacing:0.1em;flex-direction:column;gap:12px;">
-      <div style="font-size:24px;">✈</div><div>AKS PILOT OPS</div>
-      <div style="font-size:10px;color:#3a5060;">LOADING...</div>
-    </div>
-  </div>
+  <div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#080b0f;color:#4a9eff;font-family:monospace;font-size:13px;flex-direction:column;gap:12px;"><div style="font-size:24px;">✈</div><div>AKS PILOT OPS</div><div style="font-size:10px;color:#3a5060;">LOADING...</div></div></div>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
@@ -2044,13 +2039,15 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
     if(dayComp.length) {
       const starts = dayComp.map(f=>f.startTaxi).sort();
       const ends   = dayComp.map(f=>f.stopTaxi).sort();
-      // Duty end logic: blanket → 16:30, winter → last landing +30min, else actual span
+      // Duty end: blanket = 20:00, else always dutyStart + 14hrs (FAR 135 max duty period)
+      // Winter mode: last landing +30min (but never more than start+14)
       const blanketAssigned = assigned?.blanket;
-      const dutyStart = blanketAssigned ? "06:30" : starts[0];
+      const dutyStart = blanketAssigned ? "06:00" : starts[0];
       const lastEnd   = ends[ends.length-1];
-      const dutyEnd   = blanketAssigned ? "16:30"
+      const maxDutyEnd = addMinToTime(dutyStart, 14*60);
+      const dutyEnd   = blanketAssigned ? "20:00"
         : (winterMode && lastEnd) ? addMinToTime(lastEnd, 30)
-        : lastEnd;
+        : maxDutyEnd;
       dutyDays[date]={
         dutyStart, dutyEnd,
         dutyMins: calcMin(dutyStart,dutyEnd),
@@ -2065,23 +2062,19 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
     if(daySched.length) {
       let projStart, projEnd;
       if(assigned?.blanket) {
-        projStart = "06:30";
-        projEnd   = "16:30";
+        projStart = "06:00";
+        projEnd   = "20:00"; // blanket always 14hr block 06:00-20:00
       } else if(assigned?.assigned && assigned.dutyStart && assigned.dutyEnd) {
         projStart = assigned.dutyStart;
         projEnd   = assigned.dutyEnd;
       } else {
-        // Auto: first sched departure -1hr
-        // Winter mode: duty end = last landing +30min; else: duty start +14hrs
+        // Auto: 1hr before first flight, always 14hr block from start
         const schedStarts = daySched.map(f=>f.startTaxi).filter(Boolean).sort();
         const schedEnds   = daySched.map(f=>f.stopTaxi||f.schedOn).filter(Boolean).sort();
         if(schedStarts.length) {
           projStart = addMinToTime(schedStarts[0], -60);
-          if(winterMode && schedEnds.length) {
-            projEnd = addMinToTime(schedEnds[schedEnds.length-1], 30);
-          } else {
-            projEnd = addMinToTime(projStart, 14*60);
-          }
+          // Always 14hrs from duty start — winter mode only affects ACTUAL duty end
+          projEnd = addMinToTime(projStart, 14*60);
         }
       }
       if(projStart&&projEnd) {
@@ -2217,18 +2210,18 @@ function Tip({text, children, width=220}) {
 // ── DUTY DAY ASSIGNMENT MODAL ─────────────────────────────────────────────────
 function DutyAssignModal({pilot, date, initial, onSave, onClose}) {
   const pd = initial || {};
-  // mode: 'blanket' = 06:30-20:30 company default | 'auto' = ±1hr first/last | 'custom' = manual
+  // mode: 'blanket' = 06:00-20:00 company default | 'auto' = ±1hr first/last | 'custom' = manual
   const initMode = !pd.assigned ? (pd.blanket ? 'blanket' : 'auto') : 'custom';
   const [mode, setMode] = useState(initMode);
-  const [start, setStart] = useState(pd.dutyStart||"06:30");
-  const [end,   setEnd  ] = useState(pd.dutyEnd||"16:30");
+  const [start, setStart] = useState(pd.dutyStart||"06:00");
+  const [end,   setEnd  ] = useState(pd.dutyEnd||"20:00");
 
-  const dutyMins = mode==='blanket' ? calcMin("06:30","16:30")
+  const dutyMins = mode==='blanket' ? calcMin("06:00","20:00")
                  : mode==='custom' && start&&end ? calcMin(start,end) : 0;
   const col = dutyMins>=840?SC.red:dutyMins>=660?SC.orange:SC.green;
 
   const MODES = [
-    {k:'blanket', label:'BLANKET', sub:'06:30–16:30'},
+    {k:'blanket', label:'BLANKET', sub:'06:00–20:00'},
     {k:'auto',    label:'AUTO',    sub:'±1hr first/last'},
     {k:'custom',  label:'CUSTOM',  sub:'set times'},
   ];
@@ -2254,7 +2247,7 @@ function DutyAssignModal({pilot, date, initial, onSave, onClose}) {
 
       {mode==='blanket'&&<div style={{...S.card,background:"#080d10",padding:12,marginBottom:16,fontSize:11,color:"#7a9ab8",lineHeight:1.6}}>
         Company default duty window:<br/>
-        <span style={{color:"#4a9eff",fontWeight:700}}>06:30 – 20:30</span>
+        <span style={{color:"#4a9eff",fontWeight:700}}>06:00 – 20:00</span>
         <span style={{color:"#7a9ab0",marginLeft:8}}>(14 hours — applied to all days)</span>
       </div>}
       {mode==='auto'&&<div style={{...S.card,background:"#080d10",padding:12,marginBottom:16,fontSize:11,color:"#7a9ab8",lineHeight:1.6}}>
@@ -2282,8 +2275,8 @@ function DutyAssignModal({pilot, date, initial, onSave, onClose}) {
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
         <button onClick={onClose} style={{...S.btn("ghost"),padding:13}}>CANCEL</button>
         <button onClick={()=>onSave(date,{
-            dutyStart: mode==='blanket'?"06:30":mode==='custom'?start:"",
-            dutyEnd:   mode==='blanket'?"16:30":mode==='custom'?end:"",
+            dutyStart: mode==='blanket'?"06:00":mode==='custom'?start:"",
+            dutyEnd:   mode==='blanket'?"20:00":mode==='custom'?end:"",
             assigned:  mode==='custom',
             blanket:   mode==='blanket',
           })} style={{...S.btn("primary"),padding:13}}>SAVE</button>
@@ -2317,7 +2310,7 @@ function DutyBar({dutyStart, dutyEnd, dutyMins, fltMins, flights, assigned, blan
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
       <span style={{fontSize:9,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.08em"}}>
         {label}
-        {blanket&&<span style={{marginLeft:6,fontSize:8,color:"#6a8a9a"}}>blanket 06:30–16:30</span>}
+        {blanket&&<span style={{marginLeft:6,fontSize:8,color:"#6a8a9a"}}>blanket 06:00–20:00</span>}
         {assigned&&<span style={{marginLeft:6,fontSize:8,color:"#4a9eff"}}>✎ assigned</span>}
       </span>
       <span style={{fontSize:10,color:col,fontWeight:700}}>{dutyStart} – {dutyEnd}
@@ -2721,7 +2714,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     </span>
                   </Tip>;
                 })()}
-                <Tip text={"Click to assign duty window for today.\nBLANKET = company default 06:30–20:30\nAUTO = 1hr before/after flights\nCUSTOM = manual times"} width={210}>
+                <Tip text={"Click to assign duty window for today.\nBLANKET = company default 06:00–20:00\nAUTO = 1hr before/after flights\nCUSTOM = manual times"} width={210}>
                   <span onClick={e=>{e.stopPropagation();setAssignDay({username:pd.username,date:todayStr,initial:c.projectedDutyDays[todayStr]});}}
                     style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,cursor:"pointer",
                       background:"rgba(74,158,255,0.1)",color:"#4a9eff",border:"1px solid rgba(74,158,255,0.3)"}}>
@@ -2769,7 +2762,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         <div style={{fontSize:8,color:"#7a9ab8"}}>+en-route</div>
                       </div>
                     : null}
-                <span style={{fontSize:14,color:"#7a9ab8"}}>{isOpen?"▲":"▼"}</span>
+                <span style={{fontSize:16,color:isOpen?"#5aaa8a":"#4a9eff",fontWeight:700,transition:"color 0.15s"}}>{isOpen?"▲":"▼"}</span>
               </div>
             </div>
             {/* Dual progress bars: actual (solid) + projected (faded) */}
@@ -2960,13 +2953,13 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:10}}>
                   <StatCell label="PEAK DUTY" value={c.maxDutyMins?fmtMin(c.maxDutyMins):"—"}
                     color={c.maxDutyMins>=840?SC.red:c.maxDutyMins>=660?SC.orange:"#d0dae8"}
-                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:30–16:30) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the longest day."/>
+                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the longest day."/>
                   <StatCell label="AVG DUTY" value={c.avgDutyMins?fmtMin(c.avgDutyMins):"—"}
                     color="#8aaabb"
-                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:30–16:30) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the average across all duty days."/>
+                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the average across all duty days."/>
                   <StatCell label="SHORTEST DUTY" value={c.minDutyMins?fmtMin(c.minDutyMins):"—"}
                     color="#6a9a7a"
-                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:30–16:30) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the shortest day."/>
+                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the shortest day."/>
                 </div>
 
                 {/* ── PILOT STATS ── */}
@@ -2990,11 +2983,13 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     border:"1px solid #1a2530",overflow:"visible"}}>
                     <div onClick={e=>{e.stopPropagation();setPilotStatsOpen(p=>({...p,[pd.username]:!p[pd.username]}));}}
                       style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                        padding:"7px 10px",cursor:"pointer"}}>
-                      <span style={{fontSize:9,color:"#9abada",fontWeight:700,letterSpacing:"0.1em"}}>
+                        padding:"8px 10px",cursor:"pointer",
+                        borderBottom:pilotStatsOpen[pd.username]?"1px solid #1a2530":"none",
+                        background:"rgba(74,158,255,0.04)",borderRadius:pilotStatsOpen[pd.username]?"6px 6px 0 0":"6px"}}>
+                      <span style={{fontSize:10,color:"#4a9eff",fontWeight:700,letterSpacing:"0.1em"}}>
                         📊 PILOT STATS
                       </span>
-                      <span style={{fontSize:11,color:"#4a6a7a"}}>{showPilotStats?"▼":"▶"}</span>
+                      <span style={{fontSize:13,color:showPilotStats?"#5aaa8a":"#4a9eff",fontWeight:700,transition:"color 0.15s"}}>{showPilotStats?"▼":"▶"}</span>
                     </div>
                     {showPilotStats&&<div style={{padding:"0 10px 10px"}}>
 
@@ -3553,7 +3548,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                           </span>;
                         })()}
                       </span>
-                      <span style={{fontSize:12,color:"#6a8aaa"}}>{getSection(pd.username,day.key,day.defaultOpen)?"▼":"▶"}</span>
+                      <span style={{fontSize:13,color:getSection(pd.username,day.key,day.defaultOpen)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,day.key,day.defaultOpen)?"▼":"▶"}</span>
                     </div>
                     {getSection(pd.username,day.key,day.defaultOpen)&&<div style={{background:"#060a0e",borderRadius:4,padding:"6px 8px",marginTop:3}}>
                       {day.dutyBar&&<DutyBar {...day.dutyBar} flights={day.compFlights}/>}
@@ -3646,7 +3641,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         window: {msToLocalHHMM(c.windowStartMs)} → {msToLocalHHMM(c.windowStartMs+86400000)}
                       </span>
                     </div>
-                    <span style={{fontSize:12,color:"#6a8aaa"}}>{getSection(pd.username,'rolling',false)?"▼":"▶"}</span>
+                    <span style={{fontSize:13,color:getSection(pd.username,'rolling',false)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,'rolling',false)?"▼":"▶"}</span>
                   </div>
                   {getSection(pd.username,'rolling',false)&&<div style={{padding:"0 10px 8px"}}>
                     {c.rolling>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:"1px solid #1a2530",fontSize:11}}>
@@ -3696,7 +3691,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                 </span>
                 <div style={{display:"flex",alignItems:"center",gap:6}}>
                   <span style={{fontSize:8,color:"#5a6a7a"}}>via Pilot Status Board</span>
-                  <span style={{fontSize:11,color:"#6a8a9a"}}>{getSection(pd.username,'certs',false)?"▼":"▶"}</span>
+                  <span style={{fontSize:13,color:getSection(pd.username,'certs',false)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,'certs',false)?"▼":"▶"}</span>
                 </div>
               </div>
               {getSection(pd.username,'certs',false)&&<>
@@ -7380,11 +7375,11 @@ function App() {
   const [dismissed,setDismissed]=useState(new Set());
 
   useEffect(()=>{
-    Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)]).then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
+    Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)])
+    .then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
       setFlights(f||[]);
       setProfile(p||{name:"",defaultDutyType:"scheduled"});
       setDuties(d||[]);
-      // Patch company from authoritative COMPANY_MAP regardless of what's cached
       const patchedFleet = {};
       Object.entries(fl||{}).forEach(([u,pd])=>{
         patchedFleet[u] = {...pd, office: pilotCompany(u)};
@@ -7397,9 +7392,13 @@ function App() {
       if(sp) setSpiderRows(sp);
       if(ra) setRouteAvgs(ra);
       if(ql) setQualsData(ql);
-      sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); });
+      sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); }).catch(()=>{});
       setLoaded(true);
       if(!p?.name)setShowProfile(true);
+    })
+    .catch(err=>{
+      console.error('Storage load error:', err);
+      setLoaded(true); // always show app even if storage fails
     });
   },[]);
 
