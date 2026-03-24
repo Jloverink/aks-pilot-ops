@@ -10,7 +10,6 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <meta name="apple-mobile-web-app-title" content="AKS Ops"/>
   <meta name="theme-color" content="#080b0f"/>
-  <meta name="build" content="1774394002"/>
   <title>AKS · Pilot Ops</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -315,7 +314,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.4.3"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.4.4"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -2492,6 +2491,18 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
   const [hoverInfo, setHoverInfo] = useState(null);
   const [pilotStatsOpen, setPilotStatsOpen] = useState({});
   const [tlZoom, setTlZoom] = useState(0); // 0=20h, 1=12h, 2=6h, 3=3h, 4=1.5h
+  const tlScrollRef = useRef(null);
+  // Auto-scroll to center NOW when zoom level changes
+  useEffect(()=>{
+    if(!tlScrollRef.current || tlZoom===0) return;
+    const el = tlScrollRef.current;
+    const akNow = new Date();
+    const akNowMins = akNow.getHours()*60 + akNow.getMinutes();
+    const dayMins = 24*60;
+    const nowFrac = akNowMins / dayMins;
+    const scrollW = el.scrollWidth - el.clientWidth;
+    el.scrollLeft = scrollW * nowFrac;
+  },[tlZoom]);
   const toggleSection = (username, section) => {
     setOpenSections(prev => {
       const cur = prev[username] || { today:true, tomorrow:true, certs:false };
@@ -3417,7 +3428,10 @@ End: ${endReason}`;
                       </div>
                     </div>
 
-                    {/* AXIS — every hour labeled, full height grid lines */}
+                    {/* AXIS — scrollable when zoomed */}
+                    <div style={{overflowX:tlZoom>0?"auto":"visible",overflowY:"visible"}}
+                      ref={tlScrollRef}>
+                    <div style={{width:tlZoom>0?`${100*Math.pow(2,tlZoom)}%`:"100%",minWidth:"100%"}}>
                     <div style={{display:"flex",gap:6,marginBottom:2}}>
                       <div style={{width:LABEL_W,flexShrink:0}}/>
                       <div style={{flex:1,position:"relative",height:18}}>
@@ -3443,11 +3457,7 @@ End: ${endReason}`;
 
                     {/* ROWS — wrapped in a container for unified hover crosshair */}
                     <div style={{position:"relative",touchAction:"none"}}
-                      onWheel={e=>{
-                        e.preventDefault();
-                        if(e.deltaY<0) setTlZoom(z=>Math.min(4,z+1));
-                        else setTlZoom(z=>Math.max(0,z-1));
-                      }}
+
                       onMouseMove={e=>{
                         const r=e.currentTarget.getBoundingClientRect();
                         const trackLeft=LABEL_W+6;
@@ -3807,6 +3817,8 @@ End: ${endReason}`;
 
 
 
+                    </div>{/* end scrollable inner */}
+                    </div>{/* end scroll container */}
                     {/* Legend */}
                     <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:4,fontSize:8}}>
                       <span style={{color:"#5aaa8a"}}>■ yesterday</span>
