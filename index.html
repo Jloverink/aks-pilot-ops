@@ -1922,18 +1922,16 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   const nowMs = Date.now(); // true UTC ms, matches dtToMs output
 
   // ── Rolling 8-in-24 (actual) ──────────────────────────────────────────────
-  // Window: 24h back from the latest actual block-off
+  // FAR 135.265: window = 24h rolling back from NOW (current wall clock time).
+  // Flights whose block-off was more than 24 hours ago don't count regardless
+  // of when the pilot last flew. This gives a live countdown that ticks down
+  // as old flights age out of the window in real time.
   const withTimes = completed.filter(f=>f.startTaxi&&f.date);
   const sortedComp = [...withTimes].sort((a,b)=>(a.date+a.startTaxi).localeCompare(b.date+b.startTaxi));
-  let rolling=0, windowStartMs=nowMs-24*3600000;
-  if(sortedComp.length) {
-    const last=sortedComp[sortedComp.length-1];
-    const lastMs=dtToMs(last.date,last.startTaxi);
-    if(lastMs) windowStartMs=lastMs-24*3600000;
-    rolling=sortedComp
-      .filter(f=>{ const ms=dtToMs(f.date,f.startTaxi); return ms&&ms>=windowStartMs; })
-      .reduce((s,f)=>s+(f.totalMinutes||0),0);
-  }
+  const windowStartMs = nowMs - 24*3600000; // always anchored to RIGHT NOW
+  const rolling = sortedComp
+    .filter(f=>{ const ms=dtToMs(f.date,f.startTaxi); return ms&&ms>=windowStartMs; })
+    .reduce((s,f)=>s+(f.totalMinutes||0),0);
 
   // ── Projected rolling 8-in-24 (actual + en-route + scheduled) ─────────────
   const enrouteMins = enroute.reduce((s,f)=>s+(f.totalMinutes||0),0);
@@ -1941,7 +1939,7 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   // The projected window: same 24h window as actual, but we also check whether
   // upcoming scheduled flights would open a NEW worst-case 24h window.
   // Upper bound = windowStart + 24h (only flights that fit in the SAME window)
-  const projWindowEndMs = windowStartMs + 24*3600000;
+  const projWindowEndMs = nowMs + 24*3600000; // how far forward scheduled flights can fall
 
   // En-route flights are happening NOW — always count them
   // Scheduled: only count if their departure falls within the current 24h window
