@@ -311,7 +311,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.1.9"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.2.2"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -388,6 +388,15 @@ function getCompliance(flights, dutyType, duties=[]) {
 
 
 // ── RESPONSIVE HOOK ───────────────────────────────────────────────────────────
+function useClock(intervalMs=30000) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(()=>{
+    const t = setInterval(()=>setNow(Date.now()), intervalMs);
+    return ()=>clearInterval(t);
+  },[intervalMs]);
+  return now;
+}
+
 function useWindowWidth() {
   const [w, setW] = useState(typeof window !== "undefined" ? window.innerWidth : 430);
   useEffect(() => {
@@ -2185,6 +2194,7 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
     maxDutyMins, minDutyMins, avgDutyMins, dutyDaysCount, maxFltMins, q1Hrs, annualHrs, consecutiveDays, lastWorkedDate, legStats,
     dutyDays, projectedDutyDays,
     windowStartMs, projWindowEndMs:todayEndMs,
+    inWindowFlights: sortedComp.filter(f=>{ const ms=dtToMs(f.date,f.startTaxi); return ms&&ms>=windowStartMs; }),
     enrouteFlights: enroute,
     schedInWindow,
     nextDayProjected,
@@ -2785,6 +2795,52 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
               <span>■ 8-in-24 actual &nbsp; <span style={{opacity:0.5}}>■ +projected</span></span>
               <span>8:00 limit</span>
             </div>
+            {/* Live aging countdown */}
+            {(()=>{
+              const now = Date.now();
+              const akOff = (new Date().getUTCMonth()>=2&&new Date().getUTCMonth()<=10)?-8:-9;
+              const inWin = c.inWindowFlights||[];
+              // Find flights from before today that are still in the 24h window
+              const aging = inWin.filter(f=>f.date<todayStr&&f.startTaxi&&f.totalMinutes>0);
+              if(!aging.length) return null;
+              // Total minutes that will age out
+              const agingMins = aging.reduce((s,f)=>s+(f.totalMinutes||0),0);
+              // The oldest aging flight ages out first
+              const oldest = aging[0];
+              const oldestMs = (()=>{
+                const d=new Date(oldest.date+'T'+oldest.startTaxi+':00');
+                const utcMs=d.getTime()-akOff*3600000;
+                return utcMs+24*3600000; // when it exits the 24h window
+              })();
+              const msLeft = oldestMs - now;
+              if(msLeft <= 0) return null; // already aged out, will recalc next tick
+              const hLeft = Math.floor(msLeft/3600000);
+              const mLeft = Math.floor((msLeft%3600000)/60000);
+              const sLeft = Math.floor((msLeft%60000)/1000);
+              const countdown = hLeft>0?`${hLeft}h ${mLeft}m`:`${mLeft}m ${sLeft}s`;
+              const isAlsoFlying = (c.enrouteLegs||0)>0;
+              const enrMins = (c.enrouteFlights||[]).reduce((s,f)=>s+(f.totalMinutes||0),0);
+              return <div style={{fontSize:9,color:"#7a9ab8",marginTop:3,display:"flex",
+                alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                {isAlsoFlying
+                  ? <>
+                      <span style={{color:"#ffd740",fontWeight:700}}>⟳</span>
+                      <span style={{color:"#5aaa8a"}}>+{fmtMin(enrMins)} adding</span>
+                      <span style={{color:"#7a9ab8"}}>·</span>
+                      <span style={{color:"#ff9944"}}>-{fmtMin(agingMins)} erasing</span>
+                      <span style={{color:"#7a9ab8"}}>·</span>
+                      <span style={{color:"#8aaabb"}}>net {enrMins>=agingMins?"+":""}{fmtMin(Math.abs(enrMins-agingMins))} in {countdown}</span>
+                    </>
+                  : <>
+                      <span style={{color:"#ff9944"}}>⏳</span>
+                      <span><span style={{color:"#ff9944",fontWeight:700}}>{fmtMin(agingMins)}</span>
+                        <span style={{color:"#7a9ab8"}}> drops off in </span>
+                        <span style={{color:"#e0eaf8",fontWeight:700}}>{countdown}</span>
+                      </span>
+                    </>
+                }
+              </div>;
+            })()}
           </div>
 
           {/* ── EXPANDED DETAIL ── */}
@@ -3126,11 +3182,21 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const todayAll=[...c.todayFlights].sort((a,b)=>(a.startTaxi||a.schedOff||'').localeCompare(b.startTaxi||b.schedOff||''));
                   const tmrwAll=[...c.tomorrowFlights].sort((a,b)=>(a.schedOff||a.startTaxi||'').localeCompare(b.schedOff||b.startTaxi||''));
 
-                  // For timeline: if blanket is assigned, use blanket times to show duty window
+                  // For timeline: use actual duty if available, else projected
+                  // For past days without duty data, compute from flight times (first -1hr, last +30min)
                   const todayBlanket = c.projectedDutyDays[todayStr]?.blanket;
                   const yestBlanket  = c.projectedDutyDays[yesterdayStr]?.blanket;
-                  const todayDutyForTL  = todayBlanket  ? c.projectedDutyDays[todayStr]  : (todayActDuty||todayProjDuty);
-                  const yestDutyForTL   = yestBlanket   ? c.projectedDutyDays[yesterdayStr] : yestActDuty;
+                  const todayDutyForTL = todayBlanket ? c.projectedDutyDays[todayStr] : (todayActDuty||todayProjDuty);
+                  const yestDutyFromFlights = allYestFlights.length ? (()=>{
+                    const starts = allYestFlights.map(f=>f.startTaxi).filter(Boolean).sort();
+                    const ends   = allYestFlights.map(f=>f.stopTaxi).filter(Boolean).sort();
+                    if(!starts.length) return null;
+                    const ds = addMinToTime(starts[0], -60);
+                    const lastEnd = ends[ends.length-1];
+                    const de = lastEnd ? addMinToTime(lastEnd, 30) : addMinToTime(ds, 14*60);
+                    return {dutyStart:ds, dutyEnd:de, dutyMins:calcMin(ds,de)};
+                  })() : null;
+                  const yestDutyForTL = yestBlanket ? c.projectedDutyDays[yesterdayStr] : (yestActDuty||yestDutyFromFlights);
                   // Get wx for each flight's destination in this pilot's schedule
                   const flightWx = (f) => {
                     if(!wx) return null;
@@ -3352,48 +3418,52 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                             const orange2W = dutyW * ((100-p12h)/100);
 
                             return <>
+                              {/* Full duty window outline — clear bright border */}
+                              <div style={{position:"absolute",top:1,bottom:1,
+                                left:`${dsp}%`,width:`${dep-dsp}%`,
+                                border:`1.5px solid ${day.color}88`,
+                                borderRadius:3,zIndex:2,pointerEvents:"none"}}/>
+
                               {/* ZONE 1: Green 0-8hrs */}
-                              <div style={{position:"absolute",top:0,bottom:0,
+                              <div style={{position:"absolute",top:1,bottom:1,
                                 left:`${dsp}%`,width:`${green8W}%`,
-                                background:"rgba(50,210,100,0.13)",zIndex:1}}/>
+                                background:"rgba(50,210,100,0.15)",borderRadius:"3px 0 0 3px",zIndex:1}}/>
                               {/* ZONE 2: Yellow 8-12hrs */}
-                              {p8h<100&&<div style={{position:"absolute",top:0,bottom:0,
+                              {p8h<100&&<div style={{position:"absolute",top:1,bottom:1,
                                 left:`${dsp + dutyW*(p8h/100)}%`,width:`${yellow4W}%`,
-                                background:"rgba(255,215,64,0.14)",zIndex:1}}/>}
+                                background:"rgba(255,215,64,0.16)",zIndex:1}}/>}
                               {/* ZONE 3: Orange 12-14hrs */}
-                              {p12h<100&&<div style={{position:"absolute",top:0,bottom:0,
+                              {p12h<100&&<div style={{position:"absolute",top:1,bottom:1,
                                 left:`${dsp + dutyW*(p12h/100)}%`,width:`${orange2W}%`,
-                                background:"rgba(255,109,0,0.16)",zIndex:1}}/>}
+                                background:"rgba(255,109,0,0.18)",zIndex:1}}/>}
 
-                              {/* Zone divider lines — subtle vertical lines at 8hr and 12hr marks */}
-                              {p8h<100&&<div style={{position:"absolute",top:0,bottom:0,
+                              {/* Zone divider lines at 8hr and 12hr marks */}
+                              {p8h<100&&<div style={{position:"absolute",top:1,bottom:1,
                                 left:`${dsp + dutyW*(p8h/100)}%`,
-                                width:1,background:"rgba(255,215,64,0.4)",zIndex:3}}/>}
-                              {p12h<100&&<div style={{position:"absolute",top:0,bottom:0,
+                                width:1,background:"rgba(255,215,64,0.5)",zIndex:3}}/>}
+                              {p12h<100&&<div style={{position:"absolute",top:1,bottom:1,
                                 left:`${dsp + dutyW*(p12h/100)}%`,
-                                width:1,background:"rgba(255,109,0,0.5)",zIndex:3}}/>}
+                                width:1,background:"rgba(255,109,0,0.6)",zIndex:3}}/>}
 
-                              {/* DUTY START — bright left border */}
+                              {/* DUTY START — bright left edge + time label above row */}
                               <div style={{position:"absolute",top:0,bottom:0,left:`${dsp}%`,
-                                width:2,background:day.color,zIndex:6,borderRadius:1,
-                                boxShadow:`0 0 4px ${day.color}88`}}>
-                                <div style={{position:"absolute",top:2,left:4,
-                                  fontSize:8,color:day.color,fontWeight:700,
-                                  whiteSpace:"nowrap",pointerEvents:"none",
-                                  textShadow:"0 1px 3px #000"}}>
-                                  {day.duty?.dutyStart}
-                                </div>
+                                width:2,background:day.color,zIndex:6,
+                                boxShadow:`0 0 6px ${day.color}99`}}/>
+                              <div style={{position:"absolute",bottom:"calc(100% + 2px)",left:`${dsp}%`,
+                                transform:"translateX(-50%)",fontSize:8,color:day.color,fontWeight:700,
+                                background:"#080c12",padding:"1px 4px",borderRadius:2,
+                                whiteSpace:"nowrap",zIndex:7,border:`1px solid ${day.color}44`}}>
+                                {day.duty?.dutyStart}
                               </div>
 
-                              {/* DUTY END — right border */}
+                              {/* DUTY END — right edge + time label above row */}
                               <div style={{position:"absolute",top:0,bottom:0,left:`${dep}%`,
-                                width:2,background:`${day.color}99`,zIndex:6,borderRadius:1}}>
-                                <div style={{position:"absolute",top:2,right:4,
-                                  fontSize:8,color:`${day.color}cc`,fontWeight:700,
-                                  whiteSpace:"nowrap",pointerEvents:"none",
-                                  textShadow:"0 1px 3px #000",transform:"translateX(100%)"}}>
-                                  {day.duty?.dutyEnd}
-                                </div>
+                                width:2,background:`${day.color}bb`,zIndex:6}}/>
+                              <div style={{position:"absolute",bottom:"calc(100% + 2px)",left:`${dep}%`,
+                                transform:"translateX(-50%)",fontSize:8,color:`${day.color}cc`,fontWeight:700,
+                                background:"#080c12",padding:"1px 4px",borderRadius:2,
+                                whiteSpace:"nowrap",zIndex:7,border:`1px solid ${day.color}33`}}>
+                                {day.duty?.dutyEnd}
                               </div>
                               <div style={{position:"absolute",bottom:"calc(100% + 2px)",left:`${dep}%`,
                                 transform:"translateX(-50%)",fontSize:8,color:`${day.color}cc`,fontWeight:700,
@@ -7371,6 +7441,7 @@ function App() {
   const [winterMode,setWinterMode]=useState(false);
   const [screen2,setScreen2]=useState("crew");
   const winW = useWindowWidth();
+  const _tick = useClock(10000); // re-render every 10s to update countdowns
   const isDesktop = winW >= DESKTOP;
   const [flights,setFlights]=useState([]);
   const [duties,setDuties]=useState([]);
@@ -7439,8 +7510,37 @@ function App() {
   },[]);
 
   const importFlights=useCallback(async(newF,newD=[])=>{
-    setFlights(prev=>{const u=[...prev,...newF];sset(SK.flights,u);return u;});
-    if(newD.length>0) setDuties(prev=>{const u=[...prev,...newD.filter(nd=>!prev.find(d=>d.date===nd.date))];sset(SK.duties,u);return u;});
+    setFlights(prev=>{
+      // Smart merge: find the date range covered by the new import
+      // Only overwrite dates that appear in the new data — everything else stays untouched
+      if(!newF.length) return prev;
+
+      const newDates = new Set(newF.map(f=>f.date));
+      const minNewDate = [...newDates].sort()[0];
+
+      // Keep all historical flights that are NOT in the new date range
+      const historical = prev.filter(f=>!newDates.has(f.date));
+
+      // For the dates in the new import, use the new data (deduped by id)
+      const newById = {};
+      newF.forEach(f=>{ newById[f.id]=f; });
+      const fresh = Object.values(newById);
+
+      const merged = [...historical, ...fresh]
+        .sort((a,b)=>(a.date+(a.startTaxi||'')).localeCompare(b.date+(b.startTaxi||'')));
+
+      console.log(`Import: ${newDates.size} days updated (${minNewDate}+), ${historical.length} historical flights preserved, ${fresh.length} new flights`);
+      sset(SK.flights, merged);
+      return merged;
+    });
+    // Duties: only update dates present in new duties, preserve everything else
+    if(newD.length>0) setDuties(prev=>{
+      const newDutyDates = new Set(newD.map(d=>d.date));
+      const historical = prev.filter(d=>!newDutyDates.has(d.date));
+      const merged = [...historical, ...newD].sort((a,b)=>a.date.localeCompare(b.date));
+      sset(SK.duties, merged);
+      return merged;
+    });
     setScreen("home");
   },[]);
 
