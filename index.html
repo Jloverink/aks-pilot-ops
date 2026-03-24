@@ -314,7 +314,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.4.6"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.4.7"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -3401,8 +3401,15 @@ End: ${endReason}`;
                   return <div style={{background:"#080c12",borderRadius:6,padding:"10px 10px 8px",
                     marginBottom:10,border:"1px solid #1e2a38"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                      <div style={{fontSize:10,color:"#8aaabb",fontWeight:700,letterSpacing:"0.1em"}}>
-                        3-DAY DUTY OVERVIEW
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{fontSize:10,color:"#8aaabb",fontWeight:700,letterSpacing:"0.1em"}}>
+                          3-DAY DUTY OVERVIEW
+                        </div>
+                        {tlZoom>0&&<div style={{fontSize:9,color:"#4aff8a",fontWeight:700,
+                          background:"rgba(74,255,138,0.1)",border:"1px solid rgba(74,255,138,0.3)",
+                          padding:"1px 6px",borderRadius:3,letterSpacing:"0.05em"}}>
+                          {ZOOM_LABELS[tlZoom]} · scroll ← →
+                        </div>}
                       </div>
                       {/* Zoom controls */}
                       <div style={{display:"flex",alignItems:"center",gap:4}}>
@@ -3434,18 +3441,18 @@ End: ${endReason}`;
                           const pct=((hh*60+mm)-tlStart)/tlSpanW*100;
                           if(pct<0||pct>100) return null;
                           const isMaj=isMajorTick(hhmm);
-                          if(!isMaj && tlZoom<=1) return null; // don't crowd at low zoom
+                          if(!isMaj && tlZoom<=1) return null; // show sub-ticks only when zoomed
                           const dispH = String(hh%24).padStart(2,'0');
                           const dispM = String(mm).padStart(2,'0');
-                          const label = mm===0
-                            ? (tlZoom>=2 ? dispH+':00' : dispH)
-                            : ':'+dispM;
+                          // Always show full HH:MM so it's clear where you are
+                          const label = mm===0 ? dispH+':00' : dispH+':'+dispM;
                           return <div key={i} style={{position:"absolute",left:`${pct}%`,
                             transform:"translateX(-50%)",
                             fontSize:isMaj?10:8,
-                            color:isMaj?"#9abccc":"#5a8090",
-                            fontWeight:isMaj?700:400,
-                            userSelect:"none"}}>
+                            color:isMaj?"#4aff8a":"#1a8a4a",
+                            fontWeight:isMaj?700:500,
+                            userSelect:"none",
+                            textShadow:isMaj?"0 0 8px rgba(74,255,138,0.3)":null}}>
                             {label}
                           </div>;
                         })}
@@ -3756,9 +3763,15 @@ End: ${endReason}`;
                             const offPct=toPct(off)||50;
                             // Check if landing is after sunset
                             const landSunInfo=fs?.sunset&&on?signedDiff(fs.sunset,on):null;
+                            // Clamp tooltip to visible scroll area
+                            const scrollEl2=tlScrollRef.current;
+                            const scrollPct=scrollEl2?(scrollEl2.scrollLeft/(scrollEl2.scrollWidth||1)*100):0;
+                            const visWidthPct=scrollEl2?(scrollEl2.clientWidth/(scrollEl2.scrollWidth||1)*100):100;
+                            const visMin=scrollPct, visMax=scrollPct+visWidthPct;
+                            const clampedPct=Math.min(Math.max(offPct, visMin+2), visMax-2);
                             return <div style={{position:"absolute",
                               bottom:"calc(100% + 6px)",
-                              left:`${Math.min(Math.max(offPct,5),80)}%`,
+                              left:`${Math.min(Math.max(clampedPct,2),98)}%`,
                               transform:"translateX(-50%)",
                               background:"#0c1520",border:`1px solid ${fc}55`,
                               borderRadius:6,padding:"8px 11px",fontSize:9,
