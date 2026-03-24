@@ -13,6 +13,7 @@
     body { background: #080b0f; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
     html, body, #root { height: 100%; }
     #root { min-height: 100vh; }
+    /* Hide scrollbar on nav */
     nav::-webkit-scrollbar { display: none; }
   </style>
 </head>
@@ -1922,16 +1923,18 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   const nowMs = Date.now(); // true UTC ms, matches dtToMs output
 
   // ── Rolling 8-in-24 (actual) ──────────────────────────────────────────────
-  // FAR 135.265: window = 24h rolling back from NOW (current wall clock time).
-  // Flights whose block-off was more than 24 hours ago don't count regardless
-  // of when the pilot last flew. This gives a live countdown that ticks down
-  // as old flights age out of the window in real time.
+  // Window: 24h back from the latest actual block-off
   const withTimes = completed.filter(f=>f.startTaxi&&f.date);
   const sortedComp = [...withTimes].sort((a,b)=>(a.date+a.startTaxi).localeCompare(b.date+b.startTaxi));
-  const windowStartMs = nowMs - 24*3600000; // always anchored to RIGHT NOW
-  const rolling = sortedComp
-    .filter(f=>{ const ms=dtToMs(f.date,f.startTaxi); return ms&&ms>=windowStartMs; })
-    .reduce((s,f)=>s+(f.totalMinutes||0),0);
+  let rolling=0, windowStartMs=nowMs-24*3600000;
+  if(sortedComp.length) {
+    const last=sortedComp[sortedComp.length-1];
+    const lastMs=dtToMs(last.date,last.startTaxi);
+    if(lastMs) windowStartMs=lastMs-24*3600000;
+    rolling=sortedComp
+      .filter(f=>{ const ms=dtToMs(f.date,f.startTaxi); return ms&&ms>=windowStartMs; })
+      .reduce((s,f)=>s+(f.totalMinutes||0),0);
+  }
 
   // ── Projected rolling 8-in-24 (actual + en-route + scheduled) ─────────────
   const enrouteMins = enroute.reduce((s,f)=>s+(f.totalMinutes||0),0);
@@ -1939,19 +1942,17 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   // The projected window: same 24h window as actual, but we also check whether
   // upcoming scheduled flights would open a NEW worst-case 24h window.
   // Upper bound = windowStart + 24h (only flights that fit in the SAME window)
-  // +EN-ROUTE projection: only include scheduled flights for TODAY (not tomorrow).
-  // Tomorrow's projection is shown separately in the next-day calc below.
-  // We cap at end of today (23:59 AKST) so tomorrow's legs don't inflate the number.
-  const todayEndMs = dtToMs(todayStr, "23:59");
+  const projWindowEndMs = windowStartMs + 24*3600000;
 
+  // En-route flights are happening NOW — always count them
+  // Scheduled: only count if their departure falls within the current 24h window
   const upcomingSchedSorted = [...scheduled]
     .filter(f=>f.startTaxi&&f.date)
     .sort((a,b)=>(a.date+a.startTaxi).localeCompare(b.date+b.startTaxi));
 
-  // Only today's remaining scheduled legs — flights that haven't departed yet today
   const schedInWindow = upcomingSchedSorted.filter(f=>{
     const ms=dtToMs(f.date,f.startTaxi);
-    return ms && ms>=nowMs && f.date===todayStr;
+    return ms && ms>=windowStartMs && ms<=projWindowEndMs;
   });
   const schedMins = schedInWindow.reduce((s,f)=>s+(f.totalMinutes||0),0);
   const rollingProjected = rolling + enrouteMins + schedMins;
@@ -3696,14 +3697,14 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
               </div>}
 
               {/* Items by category */}
-              {["medical","kal_checkride","kal_aircraft","kal_training","airx_checkride","airx_aircraft","airx_training","training","approach"].map(cat=>{
+              {["medical","checkride","aircraft","training","approach"].map(cat=>{
                 const catItems = cat==="approach"
                   ? [...(crewData?.kalinin?.[cw.pilot.name]||[]),...(crewData?.airx?.[cw.pilot.name]||[])].map(a=>({
                       label:`[${a.airport||"?"}] ${a.approach}`, days:a.days, status:a.status, category:"approach"
                     }))
                   : Object.values(cw.pilot.items).filter(i=>i.category===cat);
                 if(!catItems.length) return null;
-                const catLabel={medical:"MEDICAL",kal_checkride:"KALININ CHECK RIDES",kal_aircraft:"KALININ AIRCRAFT",kal_training:"KALININ TRAINING",airx_checkride:"AIR X CHECK RIDES",airx_aircraft:"AIR X AIRCRAFT",airx_training:"AIR X TRAINING",training:"SHARED TRAINING",approach:"SPECIAL APPROACHES"}[cat]||cat;
+                const catLabel={medical:"MEDICAL",checkride:"CHECK RIDES",aircraft:"AIRCRAFT CURRENCY",training:"TRAINING",approach:"SPECIAL APPROACHES"}[cat];
                 const catHasRed = catItems.some(i=>i.status==="red");
                 const catHasOrange = catItems.some(i=>i.status==="orange");
                 return <div key={cat} style={{marginBottom:8}}>
@@ -4024,75 +4025,33 @@ const COL = {
 
 // Human-readable labels for each column
 const COL_LABELS = {
-  // ── MEDICAL ──────────────────────────────────────────────────────────────────
-  medical:    { label:"Medical",                             category:"medical"       },
-
-  // ── KALININ AVIATION (Seaplanes cert) ────────────────────────────────────────
-  recGndSea:  { label:"Recurrent Ground",                   category:"kal_training"  },
-  sel293:     { label:"SEL §135.293 (VFR Land)",            category:"kal_checkride" },
-  ses293:     { label:"SES §135.293 (VFR Float)",           category:"kal_checkride" },
-  p299:       { label:"§135.299 Line Check",                category:"kal_checkride" },
-  seaCA:      { label:"Check Airman (train + checkrides)",  category:"kal_checkride" },
-  seaIP:      { label:"Instructor Pilot (train only)",      category:"kal_checkride" },
-  c208Boot:   { label:"C208 Boot Ice",                      category:"kal_aircraft"  },
-  c208Tks:    { label:"C208 TKS Ice",                       category:"kal_aircraft"  },
-  c208Ifr:    { label:"C208 §135.297 IFR",                  category:"kal_aircraft"  },
-  seaCfit:    { label:"CFIT Training",                      category:"kal_training"  },
-
-  // ── AIR EXCURSIONS (PC-12 cert) ───────────────────────────────────────────────
-  recGndAirX: { label:"Recurrent Ground",                   category:"airx_training" },
-  airxCA:     { label:"Check Airman (train + checkrides)",  category:"airx_checkride"},
-  airxIP:     { label:"Instructor Pilot (train only)",      category:"airx_checkride"},
-  pc12Ifr:    { label:"PC-12 §135.297 IFR",                 category:"airx_aircraft" },
-  pc12_293:   { label:"PC-12 §135.293",                     category:"airx_aircraft" },
-  pc12_299:   { label:"PC-12 §135.299 Line Check",          category:"airx_aircraft" },
-  pc12_47:    { label:"PC-12 §135.347",                     category:"airx_aircraft" },
-  pc12_45:    { label:"PC-12 §135.345",                     category:"airx_aircraft" },
-  airxCfit:   { label:"CFIT Training",                      category:"airx_training" },
-
-  // ── SHARED ────────────────────────────────────────────────────────────────────
-  hazmat:     { label:"HazMat",                             category:"training"      },
+  medical:    { label:"Medical",            category:"medical"   },
+  recGndSea:  { label:"Rec Gnd Seaplanes",  category:"training"  },
+  recGndAirX: { label:"Rec Gnd Air X",      category:"training"  },
+  sel293:     { label:"SEL §135.293",        category:"checkride" },
+  ses293:     { label:"SES §135.293",        category:"checkride" },
+  p299:       { label:"§135.299",            category:"checkride" },
+  seaCA:      { label:"Seaplanes CA",        category:"checkride" },
+  seaIP:      { label:"Seaplanes IP",        category:"checkride" },
+  airxCA:     { label:"Air X CA",            category:"checkride" },
+  airxIP:     { label:"Air X IP",            category:"checkride" },
+  c208Boot:   { label:"C208 Boot Ice",       category:"aircraft"  },
+  c208Tks:    { label:"C208 TKS Ice",        category:"aircraft"  },
+  c208Ifr:    { label:"C208 §135.297 IFR",   category:"aircraft"  },
+  pc12Ifr:    { label:"PC-12 §135.297 IFR",  category:"aircraft"  },
+  pc12_293:   { label:"PC-12 §135.293",      category:"aircraft"  },
+  pc12_299:   { label:"PC-12 §135.299",      category:"aircraft"  },
+  seaCfit:    { label:"Seaplanes CFIT",      category:"training"  },
+  airxCfit:   { label:"Air X CFIT",          category:"training"  },
+  hazmat:     { label:"HazMat",              category:"training"  },
 };
 
 const CAT_COLORS = {
-  medical:       "#ff4757",
-  // Kalinin Aviation — teal family
-  kal_checkride: "#00cec9",
-  kal_aircraft:  "#55efc4",
-  kal_training:  "#81ecec",
-  // Air Excursions — blue/gold family
-  airx_checkride:"#4a9eff",
-  airx_aircraft: "#fdcb6e",
-  airx_training: "#a29bfe",
-  // Shared
-  checkride:     "#ffa502",
-  aircraft:      "#4a9eff",
-  training:      "#a29bfe",
+  medical:   "#ff4757",
+  checkride: "#ffa502",
+  aircraft:  "#4a9eff",
+  training:  "#a29bfe",
 };
-
-// Cert group display config
-const CERT_GROUPS = [
-  {
-    id: "kalinin",
-    label: "KALININ AVIATION",
-    subtitle: "dba Alaska Seaplanes · Seaplanes cert",
-    color: "#00cec9",
-    bg: "rgba(0,206,201,0.08)",
-    border: "rgba(0,206,201,0.25)",
-    cats: ["kal_checkride","kal_aircraft","kal_training"],
-    catLabels: {kal_checkride:"CHECK RIDES & TRAINING AUTHORITY", kal_aircraft:"AIRCRAFT CURRENCY", kal_training:"RECURRENT TRAINING"},
-  },
-  {
-    id: "airx",
-    label: "AIR EXCURSIONS",
-    subtitle: "dba Alaska Seaplanes · PC-12 cert",
-    color: "#4a9eff",
-    bg: "rgba(74,158,255,0.08)",
-    border: "rgba(74,158,255,0.25)",
-    cats: ["airx_checkride","airx_aircraft","airx_training"],
-    catLabels: {airx_checkride:"CHECK RIDES & TRAINING AUTHORITY", airx_aircraft:"AIRCRAFT CURRENCY", airx_training:"RECURRENT TRAINING"},
-  },
-];
 
 const MONTHS_MAP = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
 
@@ -4425,7 +4384,7 @@ function CrewScreen({ crewData, onSync, onUploadXlsx, syncing, lastSync, sheetEr
 
     {/* Category filter */}
     <div style={{display:"flex",gap:3,marginBottom:10,flexWrap:"wrap"}}>
-      {[["all","ALL"],["medical","MED"],["kal_checkride","KAL CHK"],["airx_checkride","AIR X CHK"],["kal_aircraft","KAL ACFT"],["airx_aircraft","AIR X ACFT"],["training","TRAIN"],["approaches","APPR"]].map(([k,l])=>(
+      {[["all","ALL"],["medical","MED"],["checkride","CHECKS"],["aircraft","ACFT"],["training","TRAIN"],["approaches","APPR"]].map(([k,l])=>(
         <button key={k} onClick={()=>setCatFilter(k)}
           style={{padding:"4px 8px",borderRadius:4,fontFamily:"'JetBrains Mono',monospace",
             border:`1px solid ${catFilter===k?"#4a9eff":"#1e2730"}`,
@@ -4486,84 +4445,30 @@ function CrewScreen({ crewData, onSync, onUploadXlsx, syncing, lastSync, sheetEr
                 )}
               </div>
             </div>}
-            {/* Medical first */}
-            {(()=>{
-              const medItems=Object.entries(p.items).filter(([k,v])=>v.category==="medical");
-              if(!medItems.length) return null;
-              return <div style={{marginBottom:10}}>
-                <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.1em",color:"#ff4757",marginBottom:5}}>MEDICAL</div>
-                {medItems.map(([k,item])=>{
+            {["medical","checkride","aircraft","training"].map(cat=>{
+              const catItems=Object.entries(p.items).filter(([k,v])=>v.category===cat);
+              if(!catItems.length) return null;
+              const catLabel={medical:"MEDICAL",checkride:"CHECK RIDES",aircraft:"AIRCRAFT CURRENCY",training:"TRAINING"}[cat];
+              return <div key={cat} style={{marginBottom:10}}>
+                <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.1em",color:CAT_COLORS[cat],marginBottom:5}}>{catLabel}</div>
+                {catItems.map(([k,item])=>{
                   const c=SC[item.status]||SC.green;
-                  const {daysStr,flair}=formatCertItem(item);
+                  const {daysStr,flair} = formatCertItem(item);
                   return <div key={k} style={{padding:"4px 0",borderBottom:"1px solid #0d1117"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10}}>
                       <span style={{color:"#b8c8d8"}}>{item.label}</span>
                       <div style={{display:"flex",alignItems:"center",gap:5}}>
-                        {flair&&<span style={{fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3,color:flair.color,background:flair.bg,border:`1px solid ${flair.color}44`,whiteSpace:"nowrap"}}>{flair.text}</span>}
+                        {flair&&<span style={{fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3,
+                          color:flair.color,background:flair.bg,border:`1px solid ${flair.color}44`,whiteSpace:"nowrap"}}>
+                          {flair.text}
+                        </span>}
                         <span style={{fontWeight:700,color:c}}>{daysStr}</span>
                       </div>
                     </div>
-                  </div>;
-                })}
-              </div>;
-            })()}
-
-            {/* Cert groups: Kalinin then Air Excursions */}
-            {CERT_GROUPS.map(grp=>{
-              const grpItems = grp.cats.flatMap(cat=>Object.entries(p.items).filter(([k,v])=>v.category===cat));
-              if(!grpItems.length) return null;
-              return <div key={grp.id} style={{marginBottom:12,borderRadius:6,border:`1px solid ${grp.border}`,
-                background:grp.bg,padding:"8px 10px"}}>
-                {/* Cert banner */}
-                <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:8}}>
-                  <span style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:grp.color}}>{grp.label}</span>
-                  <span style={{fontSize:8,color:grp.color,opacity:0.6}}>{grp.subtitle}</span>
-                </div>
-                {grp.cats.map(cat=>{
-                  const catItems=Object.entries(p.items).filter(([k,v])=>v.category===cat);
-                  if(!catItems.length) return null;
-                  return <div key={cat} style={{marginBottom:8}}>
-                    <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.08em",color:CAT_COLORS[cat],
-                      marginBottom:4,opacity:0.9}}>{grp.catLabels[cat]}</div>
-                    {catItems.map(([k,item])=>{
-                      const c=SC[item.status]||SC.green;
-                      const {daysStr,flair}=formatCertItem(item);
-                      return <div key={k} style={{padding:"4px 0",borderBottom:`1px solid ${grp.border}`}}>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10}}>
-                          <span style={{color:"#c0d0e0"}}>{item.label}</span>
-                          <div style={{display:"flex",alignItems:"center",gap:5}}>
-                            {flair&&<span style={{fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3,color:flair.color,background:flair.bg,border:`1px solid ${flair.color}44`,whiteSpace:"nowrap"}}>{flair.text}</span>}
-                            <span style={{fontWeight:700,color:c,whiteSpace:"nowrap"}}>{daysStr}</span>
-                          </div>
-                        </div>
-                      </div>;
-                    })}
                   </div>;
                 })}
               </div>;
             })}
-
-            {/* Shared training items (HazMat etc) */}
-            {(()=>{
-              const sharedItems=Object.entries(p.items).filter(([k,v])=>v.category==="training");
-              if(!sharedItems.length) return null;
-              return <div style={{marginBottom:10}}>
-                <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.1em",color:"#a29bfe",marginBottom:5}}>SHARED TRAINING</div>
-                {sharedItems.map(([k,item])=>{
-                  const c=SC[item.status]||SC.green;
-                  const {daysStr,flair}=formatCertItem(item);
-                  return <div key={k} style={{padding:"4px 0",borderBottom:"1px solid #0d1117"}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10}}>
-                      <span style={{color:"#b8c8d8"}}>{item.label}</span>
-                      <div style={{display:"flex",alignItems:"center",gap:5}}>
-                        {flair&&<span style={{fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3,color:flair.color,background:flair.bg,border:`1px solid ${flair.color}44`,whiteSpace:"nowrap"}}>{flair.text}</span>}
-                        <span style={{fontWeight:700,color:c}}>{daysStr}</span>
-                      </div>
-                    </div>
-                  </div>;
-                })}
-              </div>;
-            })()}
             {(pilotKalinin.length>0||pilotAirX.length>0)&&<div>
               <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.1em",color:"#74b9ff",marginBottom:5}}>SPECIAL APPROACHES</div>
               {[["KALININ",pilotKalinin],["AIR X",pilotAirX]].map(([label,apprList])=>
@@ -4632,10 +4537,10 @@ function CrewScreen({ crewData, onSync, onUploadXlsx, syncing, lastSync, sheetEr
                   )}
                 </div>
               </div>}
-              {["medical","kal_checkride","kal_aircraft","kal_training","airx_checkride","airx_aircraft","airx_training","training"].map(cat=>{
+              {["medical","checkride","aircraft","training"].map(cat=>{
                 const catItems=Object.entries(p.items).filter(([k,v])=>v.category===cat);
                 if(!catItems.length) return null;
-                const catLabel={medical:"MEDICAL",kal_checkride:"KALININ CHECK RIDES",kal_aircraft:"KALININ AIRCRAFT",kal_training:"KALININ TRAINING",airx_checkride:"AIR X CHECK RIDES",airx_aircraft:"AIR X AIRCRAFT",airx_training:"AIR X TRAINING",training:"SHARED TRAINING"}[cat]||cat;
+                const catLabel={medical:"MEDICAL",checkride:"CHECK RIDES",aircraft:"AIRCRAFT CURRENCY",training:"TRAINING"}[cat];
                 return <div key={cat} style={{marginBottom:8}}>
                   <div style={{fontSize:8,fontWeight:700,letterSpacing:"0.1em",color:"#6a8a9a",marginBottom:4}}>{catLabel}</div>
                   {catItems.map(([k,item])=>(
