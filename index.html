@@ -314,7 +314,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.4.5"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.4.6"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -3454,14 +3454,25 @@ End: ${endReason}`;
 
                     {/* ROWS — wrapped in a container for unified hover crosshair */}
                     <div style={{position:"relative",touchAction:"none"}}
-
                       onMouseMove={e=>{
                         const r=e.currentTarget.getBoundingClientRect();
+                        const scrollEl=tlScrollRef.current;
+                        const scrollLeft=scrollEl?scrollEl.scrollLeft:0;
+                        const innerW=scrollEl?scrollEl.scrollWidth:r.width;
                         const trackLeft=LABEL_W+6;
-                        const trackWidth=r.width-trackLeft;
-                        const rawX=e.clientX-r.left-trackLeft;
-                        if(rawX<0||rawX>trackWidth){setHoverInfo(null);return;}
-                        const pct=rawX/trackWidth*100;
+                        // rawX in inner (scrolled) coordinates
+                        const rawX=(e.clientX-r.left-trackLeft) + scrollLeft * (r.width-trackLeft)/innerW * (tlZoom>0?(100*Math.pow(2,tlZoom)/100):1);
+                        const trackWidthInner=innerW-trackLeft;
+                        // Simpler: compute pct from visible position + scroll offset
+                        const visibleTrackW=r.width-trackLeft;
+                        const visRawX=e.clientX-r.left-trackLeft;
+                        if(visRawX<0||visRawX>visibleTrackW){setHoverInfo(null);return;}
+                        // scrollLeft as fraction of total inner width
+                        const scrollFrac=scrollEl?(scrollEl.scrollLeft/Math.max(1,scrollEl.scrollWidth-scrollEl.clientWidth)):0;
+                        const visiblePct=visRawX/visibleTrackW*100;
+                        // map visible pct to actual timeline pct accounting for zoom
+                        const zoomScale=tlZoom>0?Math.pow(2,tlZoom):1;
+                        const pct=scrollFrac*100*(1-1/zoomScale)+visiblePct/zoomScale;
                         setHoverInfo({pct,timeStr:toTime(pct),global:true});
                       }}
                       onMouseLeave={()=>setHoverInfo(null)}
@@ -3469,21 +3480,27 @@ End: ${endReason}`;
                         e.preventDefault();
                         const t=e.touches[0];
                         const r=e.currentTarget.getBoundingClientRect();
-                        const trackLeft=LABEL_W+6;
-                        const trackWidth=r.width-trackLeft;
-                        const rawX=t.clientX-r.left-trackLeft;
-                        if(rawX<0||rawX>trackWidth) return;
-                        setHoverInfo({pct:rawX/trackWidth*100,timeStr:toTime(rawX/trackWidth*100),global:true});
+                        const scrollEl=tlScrollRef.current;
+                        const visibleTrackW=r.width-LABEL_W-6;
+                        const visRawX=t.clientX-r.left-LABEL_W-6;
+                        if(visRawX<0||visRawX>visibleTrackW) return;
+                        const scrollFrac=scrollEl?(scrollEl.scrollLeft/Math.max(1,scrollEl.scrollWidth-scrollEl.clientWidth)):0;
+                        const zoomScale=tlZoom>0?Math.pow(2,tlZoom):1;
+                        const pct=scrollFrac*100*(1-1/zoomScale)+visRawX/visibleTrackW*100/zoomScale;
+                        setHoverInfo({pct,timeStr:toTime(pct),global:true});
                       }}
                       onTouchMove={e=>{
                         e.preventDefault();
                         const t=e.touches[0];
                         const r=e.currentTarget.getBoundingClientRect();
-                        const trackLeft=LABEL_W+6;
-                        const trackWidth=r.width-trackLeft;
-                        const rawX=t.clientX-r.left-trackLeft;
-                        if(rawX<0||rawX>trackWidth){setHoverInfo(null);return;}
-                        setHoverInfo({pct:rawX/trackWidth*100,timeStr:toTime(rawX/trackWidth*100),global:true});
+                        const scrollEl=tlScrollRef.current;
+                        const visibleTrackW=r.width-LABEL_W-6;
+                        const visRawX=t.clientX-r.left-LABEL_W-6;
+                        if(visRawX<0||visRawX>visibleTrackW){setHoverInfo(null);return;}
+                        const scrollFrac=scrollEl?(scrollEl.scrollLeft/Math.max(1,scrollEl.scrollWidth-scrollEl.clientWidth)):0;
+                        const zoomScale=tlZoom>0?Math.pow(2,tlZoom):1;
+                        const pct=scrollFrac*100*(1-1/zoomScale)+visRawX/visibleTrackW*100/zoomScale;
+                        setHoverInfo({pct,timeStr:toTime(pct),global:true});
                       }}
                       onTouchEnd={()=>setTimeout(()=>setHoverInfo(null),1500)}>
 
