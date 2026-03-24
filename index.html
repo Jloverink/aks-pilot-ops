@@ -2039,16 +2039,23 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
     // Actual duty (completed flights only)
     const assigned = dutyAssignments[date];
     if(dayComp.length) {
-      const starts = dayComp.map(f=>f.startTaxi).sort();
-      const ends   = dayComp.map(f=>f.stopTaxi).sort();
-      // Duty end: blanket = 20:00, else always dutyStart + 14hrs (FAR 135 max duty period)
-      // Winter mode: last landing +30min (but never more than start+14)
+      const starts = dayComp.map(f=>f.startTaxi).filter(Boolean).sort();
+      const ends   = dayComp.map(f=>f.stopTaxi).filter(Boolean).sort();
       const blanketAssigned = assigned?.blanket;
-      const dutyStart = blanketAssigned ? "06:00" : starts[0];
+      // Duty start: blanket = 06:00, else 1hr before first flight (same as projected)
+      const firstFlight = starts[0];
+      const dutyStart = blanketAssigned ? "06:00"
+        : (assigned?.assigned && assigned.dutyStart) ? assigned.dutyStart
+        : firstFlight ? addMinToTime(firstFlight, -60) : firstFlight;
       const lastEnd   = ends[ends.length-1];
       const maxDutyEnd = addMinToTime(dutyStart, 14*60);
-      const dutyEnd   = blanketAssigned ? "20:00"
-        : (winterMode && lastEnd) ? addMinToTime(lastEnd, 30)
+      // Duty end for PAST completed days: last landing + 30min (realistic clock-out)
+      // For TODAY (still active): always start + 14hrs so no false over-duty warnings
+      const isPastDay = date < todayStr;
+      const realisticEnd = lastEnd ? addMinToTime(lastEnd, 30) : maxDutyEnd;
+      const dutyEnd = blanketAssigned ? "20:00"
+        : (assigned?.assigned && assigned.dutyEnd) ? assigned.dutyEnd
+        : isPastDay ? (calcMin(dutyStart, realisticEnd) <= 14*60 ? realisticEnd : maxDutyEnd)
         : maxDutyEnd;
       dutyDays[date]={
         dutyStart, dutyEnd,
