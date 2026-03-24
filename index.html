@@ -311,7 +311,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.3.2"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.3.3"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -3057,15 +3057,22 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                           : schedEstMins>0
                             ? `${schedPastNow.length} legs (sched)`
                             : "no flights yet";
+                        const showSecs = isEnrLive && enrSecsOnly >= 0;
+                        const liveH = Math.floor(displayMins/60);
+                        const liveM = Math.floor(displayMins%60);
+                        const liveS = showSecs ? enrSecsOnly : 0;
                         return <div style={{textAlign:"center",padding:"0 8px"}}>
                           <div style={{fontSize:9,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.08em",marginBottom:3}}>
                             TODAY {isEstimate?"ESTIMATE":"FLOWN"}
                           </div>
-                          <div style={{fontSize:20,fontWeight:700,
+                          <div style={{fontWeight:700,
                             color:isEstimate?"#a29bfe":"#4a9eff",
-                            fontFamily:"monospace",lineHeight:1}}>
-                            {fmtMin(displayMins)||"—"}
-                            {enrMins>0&&<span style={{fontSize:10,color:"#ffd740",marginLeft:4}}>▶</span>}
+                            fontFamily:"monospace",lineHeight:1,
+                            fontSize:showSecs?16:20}}>
+                            {showSecs
+                              ? `${liveH}:${String(liveM).padStart(2,'0')}:${String(liveS).padStart(2,'0')}`
+                              : (fmtMin(displayMins)||"—")}
+                            {isEnrLive&&<span style={{fontSize:9,color:"#ffd740",marginLeft:4}}>▶</span>}
                             {isEstimate&&<span style={{fontSize:9,color:"#a29bfe",marginLeft:3}}>~</span>}
                           </div>
                           <div style={{fontSize:8,marginTop:2,
@@ -7653,17 +7660,18 @@ function App() {
 
   const importFlights=useCallback(async(newF,newD=[])=>{
     setFlights(prev=>{
-      // Smart merge: find the date range covered by the new import
-      // Only overwrite dates that appear in the new data — everything else stays untouched
       if(!newF.length) return prev;
 
       const newDates = new Set(newF.map(f=>f.date));
-      const minNewDate = [...newDates].sort()[0];
+      const newDatesSorted = [...newDates].sort();
+      const minNewDate = newDatesSorted[0];
+      const maxNewDate = newDatesSorted[newDatesSorted.length-1];
 
-      // Keep all historical flights that are NOT in the new date range
+      // Keep all historical flights NOT covered by this import's date range
+      // This protects Jan 1 → (minNewDate - 1) and (maxNewDate + 1) → future
       const historical = prev.filter(f=>!newDates.has(f.date));
 
-      // For the dates in the new import, use the new data (deduped by id)
+      // Dedupe new flights by id
       const newById = {};
       newF.forEach(f=>{ newById[f.id]=f; });
       const fresh = Object.values(newById);
@@ -7671,7 +7679,13 @@ function App() {
       const merged = [...historical, ...fresh]
         .sort((a,b)=>(a.date+(a.startTaxi||'')).localeCompare(b.date+(b.startTaxi||'')));
 
-      console.log(`Import: ${newDates.size} days updated (${minNewDate}+), ${historical.length} historical flights preserved, ${fresh.length} new flights`);
+      const msg = `Import: ${newDates.size} days (${minNewDate}→${maxNewDate}), ${historical.length} historical preserved, ${fresh.length} fresh`;
+      console.log(msg);
+      // Safety check: never save FEWER flights than we started with (outside import window)
+      if(merged.length < prev.length - fresh.length) {
+        console.warn('Import safety: merged fewer than expected, aborting');
+        return prev;
+      }
       sset(SK.flights, merged);
       return merged;
     });
