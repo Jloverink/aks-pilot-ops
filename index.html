@@ -2039,23 +2039,16 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
     // Actual duty (completed flights only)
     const assigned = dutyAssignments[date];
     if(dayComp.length) {
-      const starts = dayComp.map(f=>f.startTaxi).filter(Boolean).sort();
-      const ends   = dayComp.map(f=>f.stopTaxi).filter(Boolean).sort();
+      const starts = dayComp.map(f=>f.startTaxi).sort();
+      const ends   = dayComp.map(f=>f.stopTaxi).sort();
+      // Duty end: blanket = 20:00, else always dutyStart + 14hrs (FAR 135 max duty period)
+      // Winter mode: last landing +30min (but never more than start+14)
       const blanketAssigned = assigned?.blanket;
-      // Duty start: blanket = 06:00, else 1hr before first flight (same as projected)
-      const firstFlight = starts[0];
-      const dutyStart = blanketAssigned ? "06:00"
-        : (assigned?.assigned && assigned.dutyStart) ? assigned.dutyStart
-        : firstFlight ? addMinToTime(firstFlight, -60) : firstFlight;
+      const dutyStart = blanketAssigned ? "06:00" : starts[0];
       const lastEnd   = ends[ends.length-1];
       const maxDutyEnd = addMinToTime(dutyStart, 14*60);
-      // Duty end for PAST completed days: last landing + 30min (realistic clock-out)
-      // For TODAY (still active): always start + 14hrs so no false over-duty warnings
-      const isPastDay = date < todayStr;
-      const realisticEnd = lastEnd ? addMinToTime(lastEnd, 30) : maxDutyEnd;
-      const dutyEnd = blanketAssigned ? "20:00"
-        : (assigned?.assigned && assigned.dutyEnd) ? assigned.dutyEnd
-        : isPastDay ? (calcMin(dutyStart, realisticEnd) <= 14*60 ? realisticEnd : maxDutyEnd)
+      const dutyEnd   = blanketAssigned ? "20:00"
+        : (winterMode && lastEnd) ? addMinToTime(lastEnd, 30)
         : maxDutyEnd;
       dutyDays[date]={
         dutyStart, dutyEnd,
@@ -7384,36 +7377,30 @@ function App() {
   const [dismissed,setDismissed]=useState(new Set());
 
   useEffect(()=>{
-    // Safety net: always load within 5 seconds no matter what
-    const fallbackTimer = setTimeout(()=>setLoaded(true), 5000);
-
     Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)])
     .then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
-      clearTimeout(fallbackTimer);
-      try { setFlights(Array.isArray(f)?f:[]); } catch(e){}
-      try { setProfile(p&&typeof p==="object"?p:{name:"",defaultDutyType:"scheduled"}); } catch(e){}
-      try { setDuties(Array.isArray(d)?d:[]); } catch(e){}
-      try {
-        const patchedFleet = {};
-        if(fl&&typeof fl==="object") Object.entries(fl).forEach(([u,pd])=>{
-          patchedFleet[u] = {...pd, office: pilotCompany(u)};
-        });
-        setFleetData(patchedFleet);
-      } catch(e){}
-      try { if(cr){ setCrewData(cr.data||null); setCrewLastSync(cr.ts||null); setCrewSource(cr.source||'xlsx'); } } catch(e){}
-      try { if(dl) setDelayData(dl); } catch(e){}
-      try { if(nc) setNightCurrencyData(nc); } catch(e){}
-      try { if(sp) setSpiderRows(sp); } catch(e){}
-      try { if(ra) setRouteAvgs(ra); } catch(e){}
-      try { if(ql) setQualsData(ql); } catch(e){}
+      setFlights(f||[]);
+      setProfile(p||{name:"",defaultDutyType:"scheduled"});
+      setDuties(d||[]);
+      const patchedFleet = {};
+      Object.entries(fl||{}).forEach(([u,pd])=>{
+        patchedFleet[u] = {...pd, office: pilotCompany(u)};
+      });
+      setFleetData(patchedFleet);
+      if(cr){ setCrewData(cr.data||null); setCrewLastSync(cr.ts||null); setCrewSource(cr.source||'xlsx'); }
+      if(dl) setDelayData(dl);
+      if(nc) setNightCurrencyData(nc);
+      if(rc) setReconData(rc);
+      if(sp) setSpiderRows(sp);
+      if(ra) setRouteAvgs(ra);
+      if(ql) setQualsData(ql);
       sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); }).catch(()=>{});
       setLoaded(true);
-      try { if(!p?.name)setShowProfile(true); } catch(e){}
+      if(!p?.name)setShowProfile(true);
     })
     .catch(err=>{
-      clearTimeout(fallbackTimer);
       console.error('Storage load error:', err);
-      setLoaded(true);
+      setLoaded(true); // always show app even if storage fails
     });
   },[]);
 
