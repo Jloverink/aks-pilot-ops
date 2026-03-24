@@ -311,7 +311,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.3.4"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.3.5"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -3012,10 +3012,11 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     }, 0);
 
                   const enrMins = enrActual + enrSchedLive;
-                  const enrMinsRounded = Math.floor(enrMins);
-                  const enrSecsOnly = Math.floor((enrMins - enrMinsRounded) * 60);
+                  const enrTotalSecs = Math.floor(enrMins * 60); // integer seconds elapsed
+                  const enrMinsRounded = Math.floor(enrTotalSecs / 60);
+                  const enrSecsOnly = enrTotalSecs % 60; // same modulo as ERASES IN
                   const isLiveEstimate = enrSchedLive > 0 && enrActual === 0;
-                  const isEnrLive = enrMins > 0;
+                  const isEnrLive = enrTotalSecs > 0;
                   const todayCompletedMins = todayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
                   const todayFlyingMins = todayCompletedMins + enrMinsRounded;
                   const yesterdayMins  = yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
@@ -3028,9 +3029,10 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     const agesOutMs = new Date(oldest.date+'T'+oldest.startTaxi+':00').getTime()+24*3600000;
                     msLeft = agesOutMs - now;
                     if(msLeft > 0) {
-                      hLeft = Math.floor(msLeft/3600000);
-                      mLeft = Math.floor((msLeft%3600000)/60000);
-                      sLeft = Math.floor((msLeft%60000)/1000);
+                      const totalSecs = Math.floor(msLeft/1000); // integer seconds
+                      hLeft = Math.floor(totalSecs/3600);
+                      mLeft = Math.floor((totalSecs%3600)/60);
+                      sLeft = totalSecs%60;
                     } else { msLeft = null; }
                   }
                   const totalLive = todayFlyingMins + yesterdayMins;
