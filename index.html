@@ -311,7 +311,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.2.8"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.2.9"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -2974,55 +2974,87 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   <StatCell label="QTR TOTAL"   value={c.q1Hrs.toFixed(1)+"h"} color={c.q1Hrs>=470?SC.red:c.q1Hrs>=420?SC.orange:"#d0dae8"}
                   tip="Actual block hours this calendar quarter (Jan-Mar, Apr-Jun, etc).\nPart 135 quarterly limit: 500 hours."/>
                 </div>
-                {/* Live countdown banner — shows when yesterday flights still in 24h window */}
+                {/* Live 8-in-24 breakdown banner */}
                 {(()=>{
-                  const now = clockMs; // use the 1-second clock so React knows to re-render
-                  const akOff = (new Date(clockMs).getUTCMonth()>=2&&new Date(clockMs).getUTCMonth()<=10)?-8:-9;
+                  const now = clockMs;
                   const inWin = c.inWindowFlights||[];
-                  const aging = inWin.filter(f=>f.startTaxi&&f.totalMinutes>0);
-                  if(!aging.length) return null;
-                  const oldest = aging[0];
-                  // new Date('YYYY-MM-DDTHH:MM:00') parses as LOCAL time in browser
-                  // .getTime() gives correct UTC ms — just add 24hrs to get when it ages out
-                  const agesOutMs = new Date(oldest.date+'T'+oldest.startTaxi+':00').getTime()+24*3600000;
-                  const msLeft = agesOutMs - now;
-                  if(msLeft <= 0) return null;
-                  const hLeft = Math.floor(msLeft/3600000);
-                  const mLeft = Math.floor((msLeft%3600000)/60000);
-                  const sLeft = Math.floor((msLeft%60000)/1000);
-                  const agingMins = aging.reduce((s,f)=>s+(f.totalMinutes||0),0);
-                  const isAlsoFlying = (c.enrouteLegs||0)>0;
+                  // Split window flights into yesterday vs today
+                  const yesterdayInWin = inWin.filter(f=>f.date<todayStr&&f.startTaxi&&f.totalMinutes>0);
+                  const todayInWin     = inWin.filter(f=>f.date===todayStr&&f.totalMinutes>0);
+                  // Also count en-route (flying right now)
                   const enrMins = (c.enrouteFlights||[]).reduce((s,f)=>s+(f.totalMinutes||0),0);
-                  const netMins = enrMins - agingMins;
+                  const todayFlyingMins = todayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0) + enrMins;
+                  const yesterdayMins  = yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
+                  // Nothing interesting to show
+                  if(!yesterdayMins && !todayFlyingMins) return null;
+                  // Countdown to when oldest yesterday flight erases
+                  let msLeft = null, hLeft=0, mLeft=0, sLeft=0;
+                  if(yesterdayInWin.length) {
+                    const oldest = yesterdayInWin[0];
+                    const agesOutMs = new Date(oldest.date+'T'+oldest.startTaxi+':00').getTime()+24*3600000;
+                    msLeft = agesOutMs - now;
+                    if(msLeft > 0) {
+                      hLeft = Math.floor(msLeft/3600000);
+                      mLeft = Math.floor((msLeft%3600000)/60000);
+                      sLeft = Math.floor((msLeft%60000)/1000);
+                    } else { msLeft = null; }
+                  }
+                  const totalLive = todayFlyingMins + yesterdayMins;
+                  const limitMins = 480;
+                  const barPct = Math.min(totalLive/limitMins*100,100);
+                  const barCol = totalLive>=limitMins?SC.red:totalLive>=390?SC.orange:totalLive>=300?"#ffd740":SC.green;
                   return <div style={{
-                    background:"rgba(255,150,50,0.07)",border:"1px solid rgba(255,150,50,0.2)",
-                    borderRadius:5,padding:"7px 10px",marginBottom:10,
-                    display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:6}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <span style={{fontSize:14}}>{isAlsoFlying?"⟳":"⏳"}</span>
-                      <div>
-                        {isAlsoFlying
-                          ? <div style={{fontSize:10,color:"#e0d0c0",fontWeight:700}}>
-                              <span style={{color:"#5aaa8a"}}>+{fmtMin(enrMins)} adding</span>
-                              <span style={{color:"#7a9ab8",margin:"0 6px"}}>·</span>
-                              <span style={{color:"#ff9944"}}>-{fmtMin(agingMins)} erasing</span>
-                              <span style={{color:"#7a9ab8",margin:"0 6px"}}>·</span>
-                              <span style={{color:netMins>=0?SC.green:SC.orange}}>net {netMins>=0?"+":""}{fmtMin(Math.abs(netMins))}</span>
-                            </div>
-                          : <div style={{fontSize:10,color:"#e0d0c0"}}>
-                              <span style={{color:"#ff9944",fontWeight:700}}>{fmtMin(agingMins)}</span>
-                              <span style={{color:"#a0b0c0"}}> erasing from 8-in-24</span>
-                            </div>}
-                        <div style={{fontSize:9,color:"#7a9ab8",marginTop:2}}>
-                          {oldest.origin||"?"}→{oldest.destination||"?"} · {oldest.tailNumber||"—"} · off {oldest.startTaxi}
+                    background:"rgba(10,18,28,0.8)",border:`1px solid ${barCol}44`,
+                    borderRadius:6,padding:"10px 12px",marginBottom:10}}>
+                    {/* Three column layout: TODAY | YESTERDAY | ERASES IN */}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1px 1fr 1px 1fr",gap:0,marginBottom:8,alignItems:"center"}}>
+                      {/* TODAY */}
+                      <div style={{textAlign:"center",padding:"0 8px"}}>
+                        <div style={{fontSize:9,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.08em",marginBottom:3}}>TODAY FLOWN</div>
+                        <div style={{fontSize:20,fontWeight:700,color:"#4a9eff",fontFamily:"monospace",lineHeight:1}}>
+                          {fmtMin(todayFlyingMins)}
+                          {enrMins>0&&<span style={{fontSize:10,color:"#ffd740",marginLeft:4}}>▶</span>}
                         </div>
+                        <div style={{fontSize:8,color:"#3a6a8a",marginTop:2}}>{c.todayFlights.filter(f=>f._status==="completed").length} legs flown</div>
+                      </div>
+                      {/* Divider */}
+                      <div style={{background:"#1e2a38",height:40}}/>
+                      {/* YESTERDAY IN WINDOW */}
+                      <div style={{textAlign:"center",padding:"0 8px"}}>
+                        <div style={{fontSize:9,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.08em",marginBottom:3}}>YESTERDAY LEFT</div>
+                        <div style={{fontSize:20,fontWeight:700,color:yesterdayMins>0?"#ff9944":"#3a5060",fontFamily:"monospace",lineHeight:1}}>
+                          {yesterdayMins>0?fmtMin(yesterdayMins):"—"}
+                        </div>
+                        <div style={{fontSize:8,color:"#3a6a8a",marginTop:2}}>{yesterdayInWin.length} legs still counting</div>
+                      </div>
+                      {/* Divider */}
+                      <div style={{background:"#1e2a38",height:40}}/>
+                      {/* ERASES IN countdown */}
+                      <div style={{textAlign:"center",padding:"0 8px"}}>
+                        <div style={{fontSize:9,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.08em",marginBottom:3}}>ERASES IN</div>
+                        {msLeft!==null
+                          ? <div style={{fontSize:20,fontWeight:700,color:"#ffd740",fontFamily:"monospace",lineHeight:1}}>
+                              {hLeft>0?`${hLeft}h ${String(mLeft).padStart(2,'0')}m`:`${String(mLeft).padStart(2,'0')}m ${String(sLeft).padStart(2,'0')}s`}
+                            </div>
+                          : <div style={{fontSize:14,color:"#3a5060",fontFamily:"monospace"}}>—</div>}
+                        <div style={{fontSize:8,color:"#3a6a8a",marginTop:2}}>yesterday clears</div>
                       </div>
                     </div>
-                    <div style={{textAlign:"right",flexShrink:0}}>
-                      <div style={{fontSize:22,fontWeight:700,color:"#ffd740",fontFamily:"monospace",letterSpacing:"0.05em",lineHeight:1}}>
-                        {hLeft>0?`${hLeft}h ${String(mLeft).padStart(2,'0')}m`:`${String(mLeft).padStart(2,'0')}m ${String(sLeft).padStart(2,'0')}s`}
+                    {/* Combined 8-in-24 bar */}
+                    <div style={{borderTop:"1px solid #1e2a38",paddingTop:7}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                        <span style={{fontSize:9,color:"#7a9ab8",fontWeight:700,letterSpacing:"0.08em"}}>8-IN-24 COMBINED</span>
+                        <span style={{fontSize:13,fontWeight:700,color:barCol,fontFamily:"monospace"}}>{fmtMin(totalLive)}<span style={{fontSize:9,color:"#3a5a6a",fontWeight:400}}> / 8:00</span></span>
                       </div>
-                      <div style={{fontSize:8,color:"#7a9ab8",marginTop:2}}>until drop</div>
+                      <div style={{height:6,background:"#1e2730",borderRadius:3,overflow:"hidden"}}>
+                        <div style={{height:"100%",width:`${barPct}%`,background:barCol,borderRadius:3,transition:"width 0.5s"}}/>
+                      </div>
+                      {/* Show today + yesterday breakdown below bar */}
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#3a5a6a",marginTop:3}}>
+                        <span style={{color:"#4a9eff"}}>▮ {fmtMin(todayFlyingMins)} today</span>
+                        {yesterdayMins>0&&<span style={{color:"#ff9944"}}>▮ {fmtMin(yesterdayMins)} yesterday</span>}
+                        <span>{fmtMin(Math.max(0,limitMins-totalLive))} remaining</span>
+                      </div>
                     </div>
                   </div>;
                 })()}                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
