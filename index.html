@@ -314,7 +314,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.4.4"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.4.5"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -2494,14 +2494,9 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
   const tlScrollRef = useRef(null);
   // Auto-scroll to center NOW when zoom level changes
   useEffect(()=>{
-    if(!tlScrollRef.current || tlZoom===0) return;
+    if(!tlScrollRef.current || tlZoom===0) { if(tlScrollRef.current) tlScrollRef.current.scrollLeft=0; return; }
     const el = tlScrollRef.current;
-    const akNow = new Date();
-    const akNowMins = akNow.getHours()*60 + akNow.getMinutes();
-    const dayMins = 24*60;
-    const nowFrac = akNowMins / dayMins;
-    const scrollW = el.scrollWidth - el.clientWidth;
-    el.scrollLeft = scrollW * nowFrac;
+    setTimeout(()=>{ el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2; }, 30);
   },[tlZoom]);
   const toggleSection = (username, section) => {
     setOpenSections(prev => {
@@ -3281,18 +3276,19 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
 
                 {/* ── 3-DAY STACKED TIMELINE ── */}
                 {(()=>{
-                  // Zoom-aware timeline bounds — center on NOW
-                  const ZOOM_SPANS = [20*60, 12*60, 6*60, 3*60, 90]; // minutes at each zoom level
-                  const ZOOM_TICKS = [60, 30, 15, 10, 5];            // tick interval per zoom level
+                  // Zoom-aware timeline bounds — always centered on Alaska NOW
+                  const ZOOM_SPANS = [20*60, 12*60, 6*60, 3*60, 90];
+                  const ZOOM_TICKS  = [60, 30, 15, 5, 1];
+                  const ZOOM_MAJORS = [60, 60, 30, 15, 5];
                   const ZOOM_LABELS = ['20h','12h','6h','3h','90m'];
                   const tlSpan = ZOOM_SPANS[tlZoom];
-                  const tlTickMin = ZOOM_TICKS[tlZoom];
-                  // Center on current Alaska time
-                  const _akNow = new Date(clockMs);
-                  const _akNowMins = _akNow.getHours()*60 + _akNow.getMinutes();
-                  // At zoom 0, keep the original 04:00-24:00 window; otherwise center on now
-                  const TL_CENTER = tlZoom===0 ? (4*60+20*60/2) : _akNowMins;
-                  const tlStart = tlZoom===0 ? 4*60 : Math.max(0, Math.round(TL_CENTER - tlSpan/2));
+                  const tlTickMin  = ZOOM_TICKS[tlZoom];
+                  const tlMajorMin = ZOOM_MAJORS[tlZoom];
+                  const _akOffTL = (new Date(clockMs).getUTCMonth()>=2&&new Date(clockMs).getUTCMonth()<=10)?-8:-9;
+                  const _akNowMs = clockMs + _akOffTL*3600000;
+                  const _akNowD  = new Date(_akNowMs);
+                  const _akNowMins = _akNowD.getUTCHours()*60 + _akNowD.getUTCMinutes();
+                  const tlStart = tlZoom===0 ? 4*60 : Math.max(0, Math.round(_akNowMins - tlSpan/2));
                   const tlEnd   = tlZoom===0 ? 24*60 : tlStart + tlSpan;
                   const tlSpanW  = tlEnd - tlStart;
                   const toPct=t=>{if(!t)return null;const[h,m]=t.split(':').map(Number);return Math.max(0,Math.min(100,((h*60+m)-tlStart)/tlSpanW*100));};
@@ -3392,11 +3388,9 @@ End: ${endReason}`;
                     const h=Math.floor(m/60), mm=m%60;
                     allTicks.push(`${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`);
                   }
-                  // Major ticks: every 2x the tick interval (or every hour at zoom 0)
-                  const majorInterval = tlZoom===0?60:tlTickMin*2;
                   const isMajorTick = (hhmm) => {
                     const [h,m]=hhmm.split(':').map(Number);
-                    return (h*60+m) % majorInterval === 0;
+                    return (h*60+m) % tlMajorMin === 0;
                   };
                   // Keep old names for compatibility
                   const allHourTicks = allTicks;
@@ -3441,14 +3435,17 @@ End: ${endReason}`;
                           if(pct<0||pct>100) return null;
                           const isMaj=isMajorTick(hhmm);
                           if(!isMaj && tlZoom<=1) return null; // don't crowd at low zoom
+                          const dispH = String(hh%24).padStart(2,'0');
+                          const dispM = String(mm).padStart(2,'0');
                           const label = mm===0
-                            ? String(hh%24).padStart(2,'0')
-                            : `:${String(mm).padStart(2,'0')}`;
+                            ? (tlZoom>=2 ? dispH+':00' : dispH)
+                            : ':'+dispM;
                           return <div key={i} style={{position:"absolute",left:`${pct}%`,
                             transform:"translateX(-50%)",
-                            fontSize:isMaj?9:8,
-                            color:isMaj?"#5a7a8a":"#3a5060",
-                            fontWeight:isMaj?600:400}}>
+                            fontSize:isMaj?10:8,
+                            color:isMaj?"#9abccc":"#5a8090",
+                            fontWeight:isMaj?700:400,
+                            userSelect:"none"}}>
                             {label}
                           </div>;
                         })}
