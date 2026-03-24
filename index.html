@@ -311,7 +311,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.2.4"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.2.5"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -3440,8 +3440,11 @@ End: ${endReason}`;
                               : rawDiff;
                             // Only flag if within the same operational day (diff within ±6hrs is meaningful)
                             const minsToEndSane = minsToEnd!==null && Math.abs(minsToEnd)<=360 ? minsToEnd : null;
-                            const nearDutyEnd = minsToEndSane!=null && minsToEndSane>=0 && minsToEndSane<=60;
-                            const overDutyEnd = minsToEndSane!=null && minsToEndSane<0 && minsToEndSane>=-60;
+                            // Don't warn if duty end = last_landing+30 (that's just how we compute it — not a real constraint)
+                            // Only warn when duty end is a hard limit: blanket (20:00) or start+14hrs
+                            const dutyIsHardLimit = day.duty?.blanket || (!day.duty?.assigned && minsToEndSane > 25);
+                            const nearDutyEnd = dutyIsHardLimit && minsToEndSane!=null && minsToEndSane>=0 && minsToEndSane<=60;
+                            const overDutyEnd = dutyIsHardLimit && minsToEndSane!=null && minsToEndSane<0 && minsToEndSane>=-60;
 
                             // Full-height zone backgrounds
                             const dutyW = dep - dsp;
@@ -3482,25 +3485,33 @@ End: ${endReason}`;
                                 width:2,background:day.color,zIndex:6,
                                 boxShadow:`0 0 6px ${day.color}99`}}/>
                               {/* Duty start label below row with reason */}
-                              <Tip text={day.dutyReason} width={200}>
-                                <div style={{position:"absolute",top:"calc(100% + 3px)",left:`${dsp}%`,
-                                  transform:"translateX(-2px)",fontSize:7,color:day.color,fontWeight:700,
-                                  background:"#080c12",padding:"1px 4px",borderRadius:2,
-                                  whiteSpace:"nowrap",zIndex:7,border:`1px solid ${day.color}55`,
-                                  cursor:"default"}}>
-                                  ▶ {day.duty?.dutyStart}
-                                </div>
-                              </Tip>
+                              <div style={{position:"absolute",top:"calc(100% + 2px)",left:`${dsp}%`,
+                                transform:"translateX(-2px)",zIndex:7}}>
+                                <Tip text={day.dutyReason} width={220}>
+                                  <div style={{fontSize:8,color:day.color,fontWeight:700,
+                                    background:"#080c12",padding:"2px 5px",borderRadius:2,
+                                    whiteSpace:"nowrap",border:`1px solid ${day.color}55`,
+                                    cursor:"default",display:"inline-flex",alignItems:"center",gap:3}}>
+                                    <span style={{fontSize:7,opacity:0.7}}>DUTY</span>
+                                    <span>{day.duty?.dutyStart}</span>
+                                  </div>
+                                </Tip>
+                              </div>
 
                               {/* DUTY END — right edge */}
                               <div style={{position:"absolute",top:0,bottom:0,left:`${dep}%`,
                                 width:2,background:`${day.color}bb`,zIndex:6}}/>
                               {/* Duty end label below row */}
-                              <div style={{position:"absolute",top:"calc(100% + 3px)",left:`${dep}%`,
-                                transform:"translateX(calc(-100% + 2px))",fontSize:7,color:`${day.color}cc`,fontWeight:700,
-                                background:"#080c12",padding:"1px 4px",borderRadius:2,
-                                whiteSpace:"nowrap",zIndex:7,border:`1px solid ${day.color}33`}}>
-                                {day.duty?.dutyEnd} ◀
+                              <div style={{position:"absolute",top:"calc(100% + 2px)",left:`${dep}%`,
+                                transform:"translateX(calc(-100% + 2px))",zIndex:7,
+                                display:"flex",justifyContent:"flex-end"}}>
+                                <div style={{fontSize:8,color:`${day.color}cc`,fontWeight:700,
+                                  background:"#080c12",padding:"2px 5px",borderRadius:2,
+                                  whiteSpace:"nowrap",border:`1px solid ${day.color}33`,
+                                  display:"inline-flex",alignItems:"center",gap:3}}>
+                                  <span>{day.duty?.dutyEnd}</span>
+                                  <span style={{fontSize:7,opacity:0.7}}>END</span>
+                                </div>
                               </div>
 
                               {/* NEAR/OVER DUTY END warning flag */}
@@ -7480,7 +7491,7 @@ function App() {
   const [winterMode,setWinterMode]=useState(false);
   const [screen2,setScreen2]=useState("crew");
   const winW = useWindowWidth();
-  const _tick = useClock(10000); // re-render every 10s to update countdowns
+  const _tick = useClock(1000); // re-render every 1s for live countdown seconds
   const isDesktop = winW >= DESKTOP;
   const [flights,setFlights]=useState([]);
   const [duties,setDuties]=useState([]);
