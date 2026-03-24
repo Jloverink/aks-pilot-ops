@@ -311,7 +311,7 @@ const milToHHMM = (n) => {
 
 // ── STORAGE ────────────────────────────────────────────────────────────────────
 const STORAGE_VERSION = "v4"; // bump this to invalidate cached parsed data
-const APP_VERSION = "1.0.0"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
+const APP_VERSION = "1.1.9"; // major.minor.patch — minor=new features, patch=bug fixes, major=breaking changes
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
@@ -3345,45 +3345,56 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                             const nearDutyEnd = minsToEndSane!=null && minsToEndSane>=0 && minsToEndSane<=60;
                             const overDutyEnd = minsToEndSane!=null && minsToEndSane<0 && minsToEndSane>=-60;
 
+                            // Full-height zone backgrounds
+                            const dutyW = dep - dsp;
+                            const green8W  = dutyW * (p8h/100);
+                            const yellow4W = dutyW * ((p12h-p8h)/100);
+                            const orange2W = dutyW * ((100-p12h)/100);
+
                             return <>
-                              {/* Duty band — solid strip at bottom of row, clearly separate from flight blocks */}
-                              <div style={{position:"absolute",bottom:0,height:DUTY_H,
-                                left:`${dsp}%`,width:`${dep-dsp}%`,
-                                background:grad,
-                                border:`1px solid rgba(255,255,255,0.15)`,
-                                borderRadius:2,zIndex:2}}>
-                                {/* DUTY START time label */}
-                                <div style={{position:"absolute",top:"50%",left:3,
-                                  transform:"translateY(-50%)",
-                                  fontSize:7,color:"rgba(255,255,255,0.7)",fontWeight:700,
-                                  whiteSpace:"nowrap",pointerEvents:"none"}}>
+                              {/* ZONE 1: Green 0-8hrs */}
+                              <div style={{position:"absolute",top:0,bottom:0,
+                                left:`${dsp}%`,width:`${green8W}%`,
+                                background:"rgba(50,210,100,0.13)",zIndex:1}}/>
+                              {/* ZONE 2: Yellow 8-12hrs */}
+                              {p8h<100&&<div style={{position:"absolute",top:0,bottom:0,
+                                left:`${dsp + dutyW*(p8h/100)}%`,width:`${yellow4W}%`,
+                                background:"rgba(255,215,64,0.14)",zIndex:1}}/>}
+                              {/* ZONE 3: Orange 12-14hrs */}
+                              {p12h<100&&<div style={{position:"absolute",top:0,bottom:0,
+                                left:`${dsp + dutyW*(p12h/100)}%`,width:`${orange2W}%`,
+                                background:"rgba(255,109,0,0.16)",zIndex:1}}/>}
+
+                              {/* Zone divider lines — subtle vertical lines at 8hr and 12hr marks */}
+                              {p8h<100&&<div style={{position:"absolute",top:0,bottom:0,
+                                left:`${dsp + dutyW*(p8h/100)}%`,
+                                width:1,background:"rgba(255,215,64,0.4)",zIndex:3}}/>}
+                              {p12h<100&&<div style={{position:"absolute",top:0,bottom:0,
+                                left:`${dsp + dutyW*(p12h/100)}%`,
+                                width:1,background:"rgba(255,109,0,0.5)",zIndex:3}}/>}
+
+                              {/* DUTY START — bright left border */}
+                              <div style={{position:"absolute",top:0,bottom:0,left:`${dsp}%`,
+                                width:2,background:day.color,zIndex:6,borderRadius:1,
+                                boxShadow:`0 0 4px ${day.color}88`}}>
+                                <div style={{position:"absolute",top:2,left:4,
+                                  fontSize:8,color:day.color,fontWeight:700,
+                                  whiteSpace:"nowrap",pointerEvents:"none",
+                                  textShadow:"0 1px 3px #000"}}>
                                   {day.duty?.dutyStart}
-                                </div>
-                                {/* DUTY END time label */}
-                                <div style={{position:"absolute",top:"50%",right:3,
-                                  transform:"translateY(-50%)",
-                                  fontSize:7,color:"rgba(255,255,255,0.7)",fontWeight:700,
-                                  whiteSpace:"nowrap",pointerEvents:"none"}}>
-                                  {day.duty?.dutyEnd}
                                 </div>
                               </div>
 
-                              {/* Zone tick lines inside band */}
-                              {p8h<100&&<div style={{position:"absolute",top:1,bottom:1,
-                                left:`calc(${dsp}% + ${dep-dsp}% * ${p8h/100})`,
-                                width:1,background:"rgba(255,215,64,0.5)",zIndex:3}}/>}
-                              {p12h<100&&<div style={{position:"absolute",top:1,bottom:1,
-                                left:`calc(${dsp}% + ${dep-dsp}% * ${p12h/100})`,
-                                width:1,background:"rgba(255,109,0,0.5)",zIndex:3}}/>}
-
-                              {/* DUTY START — bright marker line at bottom strip */}
-                              <div style={{position:"absolute",bottom:0,left:`${dsp}%`,
-                                width:2,height:DUTY_H,background:day.color,zIndex:6,borderRadius:1,
-                                boxShadow:`0 0 4px ${day.color}88`}}/>
-
-                              {/* DUTY END — marker line at bottom strip */}
-                              <div style={{position:"absolute",bottom:0,left:`${dep}%`,
-                                width:2,height:DUTY_H,background:`${day.color}99`,zIndex:6,borderRadius:1}}/>
+                              {/* DUTY END — right border */}
+                              <div style={{position:"absolute",top:0,bottom:0,left:`${dep}%`,
+                                width:2,background:`${day.color}99`,zIndex:6,borderRadius:1}}>
+                                <div style={{position:"absolute",top:2,right:4,
+                                  fontSize:8,color:`${day.color}cc`,fontWeight:700,
+                                  whiteSpace:"nowrap",pointerEvents:"none",
+                                  textShadow:"0 1px 3px #000",transform:"translateX(100%)"}}>
+                                  {day.duty?.dutyEnd}
+                                </div>
+                              </div>
                               <div style={{position:"absolute",bottom:"calc(100% + 2px)",left:`${dep}%`,
                                 transform:"translateX(-50%)",fontSize:8,color:`${day.color}cc`,fontWeight:700,
                                 background:"#080c12",padding:"1px 4px",borderRadius:2,
