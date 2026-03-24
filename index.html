@@ -7384,30 +7384,36 @@ function App() {
   const [dismissed,setDismissed]=useState(new Set());
 
   useEffect(()=>{
+    // Safety net: always load within 5 seconds no matter what
+    const fallbackTimer = setTimeout(()=>setLoaded(true), 5000);
+
     Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)])
     .then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
-      setFlights(f||[]);
-      setProfile(p||{name:"",defaultDutyType:"scheduled"});
-      setDuties(d||[]);
-      const patchedFleet = {};
-      Object.entries(fl||{}).forEach(([u,pd])=>{
-        patchedFleet[u] = {...pd, office: pilotCompany(u)};
-      });
-      setFleetData(patchedFleet);
-      if(cr){ setCrewData(cr.data||null); setCrewLastSync(cr.ts||null); setCrewSource(cr.source||'xlsx'); }
-      if(dl) setDelayData(dl);
-      if(nc) setNightCurrencyData(nc);
-      if(rc) setReconData(rc);
-      if(sp) setSpiderRows(sp);
-      if(ra) setRouteAvgs(ra);
-      if(ql) setQualsData(ql);
+      clearTimeout(fallbackTimer);
+      try { setFlights(Array.isArray(f)?f:[]); } catch(e){}
+      try { setProfile(p&&typeof p==="object"?p:{name:"",defaultDutyType:"scheduled"}); } catch(e){}
+      try { setDuties(Array.isArray(d)?d:[]); } catch(e){}
+      try {
+        const patchedFleet = {};
+        if(fl&&typeof fl==="object") Object.entries(fl).forEach(([u,pd])=>{
+          patchedFleet[u] = {...pd, office: pilotCompany(u)};
+        });
+        setFleetData(patchedFleet);
+      } catch(e){}
+      try { if(cr){ setCrewData(cr.data||null); setCrewLastSync(cr.ts||null); setCrewSource(cr.source||'xlsx'); } } catch(e){}
+      try { if(dl) setDelayData(dl); } catch(e){}
+      try { if(nc) setNightCurrencyData(nc); } catch(e){}
+      try { if(sp) setSpiderRows(sp); } catch(e){}
+      try { if(ra) setRouteAvgs(ra); } catch(e){}
+      try { if(ql) setQualsData(ql); } catch(e){}
       sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); }).catch(()=>{});
       setLoaded(true);
-      if(!p?.name)setShowProfile(true);
+      try { if(!p?.name)setShowProfile(true); } catch(e){}
     })
     .catch(err=>{
+      clearTimeout(fallbackTimer);
       console.error('Storage load error:', err);
-      setLoaded(true); // always show app even if storage fails
+      setLoaded(true);
     });
   },[]);
 
