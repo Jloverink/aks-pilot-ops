@@ -7375,11 +7375,11 @@ function App() {
   const [dismissed,setDismissed]=useState(new Set());
 
   useEffect(()=>{
-    Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)]).then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
+    Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)])
+    .then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
       setFlights(f||[]);
       setProfile(p||{name:"",defaultDutyType:"scheduled"});
       setDuties(d||[]);
-      // Patch company from authoritative COMPANY_MAP regardless of what's cached
       const patchedFleet = {};
       Object.entries(fl||{}).forEach(([u,pd])=>{
         patchedFleet[u] = {...pd, office: pilotCompany(u)};
@@ -7392,9 +7392,13 @@ function App() {
       if(sp) setSpiderRows(sp);
       if(ra) setRouteAvgs(ra);
       if(ql) setQualsData(ql);
-      sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); });
+      sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); }).catch(()=>{});
       setLoaded(true);
       if(!p?.name)setShowProfile(true);
+    })
+    .catch(err=>{
+      console.error('Storage load error:', err);
+      setLoaded(true); // always show app even if storage fails
     });
   },[]);
 
