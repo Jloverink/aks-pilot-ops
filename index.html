@@ -13,6 +13,8 @@
     body { background: #080b0f; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
     html, body, #root { height: 100%; }
     #root { min-height: 100vh; }
+    /* Hide scrollbar on nav */
+    nav::-webkit-scrollbar { display: none; }
   </style>
 </head>
 <body>
@@ -406,8 +408,8 @@ const S = {
   app:{background:"#080b0f",minHeight:"100vh",width:"100%",fontFamily:"'JetBrains Mono',monospace",color:"#e8edf2",display:"flex",flexDirection:"column"},
   topBar:{background:"linear-gradient(180deg,#0d1117 0%,#080b0f 100%)",borderBottom:"1px solid #1e2730",padding:"14px 18px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50},
   content:{flex:1,overflowY:"auto",padding:"16px 14px 120px"},
-  navBar:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:600,background:"rgba(8,11,15,0.97)",borderTop:"1px solid rgba(255,255,255,0.12)",backdropFilter:"blur(8px)",display:"flex",zIndex:100},
-  navItem:(a)=>({flex:1,padding:"12px 2px 16px",display:"flex",flexDirection:"column",alignItems:"center",gap:5,cursor:"pointer",background:"none",border:"none",color:a?"#ffffff":"rgba(255,255,255,0.35)",transition:"color 0.15s"}),
+  navBar:{position:"fixed",bottom:0,left:0,right:0,width:"100%",background:"rgba(8,11,15,0.97)",borderTop:"1px solid rgba(255,255,255,0.12)",backdropFilter:"blur(8px)",display:"flex",overflowX:"auto",overflowY:"hidden",zIndex:100,WebkitOverflowScrolling:"touch",scrollbarWidth:"none"},
+  navItem:(a)=>({flex:"0 0 64px",padding:"10px 2px 14px",display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer",background:"none",border:"none",color:a?"#ffffff":"rgba(255,255,255,0.35)",transition:"color 0.15s"}),
   card:{background:"#0d1117",border:"1px solid #1e2730",borderRadius:8,padding:"14px 16px",marginBottom:12},
   ct:{fontSize:10,letterSpacing:"0.15em",color:"#7a9ab8",textTransform:"uppercase",marginBottom:10,fontWeight:700},
   lbl:{fontSize:11,color:"#7a9ab8",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:5,display:"block"},
@@ -704,7 +706,7 @@ function FuelScreen() {
         <div style={{...S.fg}}>
           <label style={S.lbl}>ENGINE</label>
           <div style={{display:"flex",gap:8}}>
-            {[["garrett","Garrett PT6"],["ex","EX (Pratt)"]].map(([k,l])=>(
+            {[["garrett","Garret TPE331"],["ex","EX Caravan PT6"]].map(([k,l])=>(
               <button key={k} onClick={()=>setEngine(k)} style={{flex:1,padding:"10px",borderRadius:6,fontFamily:"'JetBrains Mono',monospace",border:`2px solid ${engine===k?"#ff6d00":"#1e2730"}`,background:engine===k?"rgba(255,109,0,0.1)":"#0a1118",color:engine===k?"#ff6d00":"#7a9ab8",fontSize:11,fontWeight:700,cursor:"pointer"}}>
                 {l}
               </button>
@@ -2710,7 +2712,16 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <div style={{width:8,height:8,borderRadius:"50%",background:col,boxShadow:`0 0 6px ${col}`,flexShrink:0}}/>
                 <span style={{fontSize:12,fontWeight:700,color:"#e0e8f0"}}>{pd.fullName}</span>
-                {c.enrouteLegs>0&&<span style={{fontSize:9,color:"#ffd740",fontWeight:700}}>✈ IN AIR</span>}
+                {c.enrouteLegs>0&&(()=>{
+                  const ef=c.enrouteFlights||[];
+                  const tail=ef[0]?.tailNumber||"";
+                  const route=ef[0]?`${ef[0].origin||"?"}→${ef[0].destination||"?"}`:"";
+                  return <Tip text={ef.map(f=>`${f.origin||"?"}→${f.destination||"?"} · ${f.tailNumber||"—"}`).join("\n")} width={180}>
+                    <span style={{fontSize:9,color:"#ffd740",fontWeight:700,cursor:"help"}}>
+                      ✈ IN AIR{tail?` · ${tail}`:""}
+                    </span>
+                  </Tip>;
+                })()}
                 <Tip text={"Click to assign duty window for today.\nBLANKET = company default 06:30–20:30\nAUTO = 1hr before/after flights\nCUSTOM = manual times"} width={210}>
                   <span onClick={e=>{e.stopPropagation();setAssignDay({username:pd.username,date:todayStr,initial:c.projectedDutyDays[todayStr]});}}
                     style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,cursor:"pointer",
@@ -7229,7 +7240,6 @@ const NAV=[
   {id:"regs",  icon:"§", label:"REGS"},
   {id:"quals", icon:"🎖",label:"QUALS"},
   {id:"stats", icon:"📊",label:"STATS"},
-  {id:"recon", icon:"⚖",label:"RECON"},
   {id:"import",icon:"↑", label:"IMPORT"},
 ];
 
@@ -7475,7 +7485,6 @@ function App() {
     if(s==="regs")    return <RegsScreen/>;
     if(s==="quals")   return <QualsScreen qualsData={qualsData} onUpload={uploadQuals} fleetData={fleetData}/>;
     if(s==="stats")   return <StatsScreen fleetData={fleetData} routeAvgs={routeAvgs}/>;
-    if(s==="recon")   return <ReconScreen reconData={reconData} spiderRows={spiderRows} onRunRecon={importRecon}/>;
     if(s==="night")   return <NightScreen fleetData={fleetData} nightCurrencyData={nightCurrencyData} onUploadNightXlsx={uploadNightXlsx}/>;
     if(s==="tails")   return <TailsScreen fleetData={fleetData} delayData={delayData} onImportDelays={importDelays} routeAvgs={routeAvgs} wx={wx}/>;
     return <FleetScreen fleetData={fleetData} onUpdateDuty={updateDuty} crewData={crewData}/>;
