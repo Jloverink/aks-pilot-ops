@@ -3163,8 +3163,8 @@ Part 135 limit: 500 hours per quarter."/>
                     tip="Block hours over the last two calendar quarters (rolling 6-month).
 Useful for tracking mid-year pacing."/>
                   {(()=>{
-                    const allPF=flights.filter(f=>(f._pilot||f.pilot||'')===(pd?.username||'')); 
-                    const earliest=[...allPF].sort((a,b)=>a.date.localeCompare(b.date))[0]?.date||null;
+                    const allPF=pd.flights||[];
+                    const earliest=[...allPF].filter(f=>f._status==='completed').sort((a,b)=>a.date.localeCompare(b.date))[0]?.date||null;
                     const yr=new Date().getFullYear();
                     const ok=!earliest||earliest<=`${yr}-01-01`;
                     return <StatCell label={'ANNUAL'+(ok?'':'⚠')} value={(c.annualHrs||0).toFixed(0)+'h'}
