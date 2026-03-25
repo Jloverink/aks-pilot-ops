@@ -2872,47 +2872,73 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     🪪 {cw.expired.length>0?`${cw.expired.length} EXP`:cw.expiring.length>0?`${cw.expiring.length} ≤30d`:`${cw.warning.length} ≤60d`}
                   </span></Tip>;
                 })()}
-                {/* Mini 8-in-24 strip — inline with badges, mirrors expanded row */}
+                {/* Mini 8-in-24 strip — live countup/countdown */}
                 {!isOpen&&(()=>{
-                  const now2=Date.now();
+                  const now2=clockMs;
                   const win2=now2-24*3600000;
-                  // Live yesterday intersection
-                  let yMins2=0;
+                  const wallSec2=Math.floor(now2/1000)%60;
+                  const downSec2=59-wallSec2;
+
+                  // Yesterday: live intersection countdown
+                  let yMins2=0, windowInYest2=false;
                   for(const f of (c.yesterdayFlights||[])){
                     if(!f.startTaxi||!f.totalMinutes) continue;
                     const offMs=new Date(f.date+'T'+f.startTaxi+':00').getTime();
                     const onMs=offMs+f.totalMinutes*60000;
                     yMins2+=Math.max(0,Math.min(onMs,now2)-Math.max(offMs,win2))/60000;
+                    if(win2>=offMs&&win2<onMs) windowInYest2=true;
                   }
                   yMins2=Math.floor(yMins2);
-                  const tMins2=Math.floor(c.todayMins||0);
+
+                  // Today: completed + live elapsed on active en-route
+                  let activeElapsed2=0, inTodayBlock2=false;
+                  for(const f of (c.enrouteFlights||[])){
+                    const off=f.startTaxi||f.schedOff; if(!off||!f.date) continue;
+                    const offMs=new Date(f.date+'T'+off+':00').getTime();
+                    const cap=f.totalMinutes||f._schedDurMins||120;
+                    const etaMs=offMs+cap*60000;
+                    if(now2>=offMs&&now2<etaMs){inTodayBlock2=true;activeElapsed2+=(now2-offMs)/60000;}
+                    else if(now2>=etaMs){activeElapsed2+=cap;}
+                  }
+                  if(!inTodayBlock2){
+                    const todayStr2=new Date(now2).toISOString().slice(0,10);
+                    for(const f of (c.todayFlights||[])){
+                      if(f._status!=='scheduled'||!f.schedOff||!f._schedDurMins) continue;
+                      const offMs=new Date(todayStr2+'T'+f.schedOff+':00').getTime();
+                      const etaMs=offMs+f._schedDurMins*60000;
+                      if(now2>=offMs&&now2<etaMs){inTodayBlock2=true;activeElapsed2+=(now2-offMs)/60000;}
+                    }
+                  }
+                  const tMins2=Math.floor((c.todayMins||0)+activeElapsed2);
                   const tot2=tMins2+yMins2;
                   const rem2=Math.max(0,480-tot2);
                   const totCol=tot2>=480?SC.red:tot2>=390?SC.orange:tot2>=300?"#ffd740":SC.green;
-                  // Next clears time
-                  const sortedY2=[...(c.yesterdayFlights||[])].filter(f=>f.startTaxi&&f.totalMinutes>0)
-                    .sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
+                  const fmtSec=(mins,up)=>{const h=Math.floor(mins/60),m=mins%60,s=up?wallSec2:downSec2;return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;};
+                  const sortedY2=[...(c.yesterdayFlights||[])].filter(f=>f.startTaxi&&f.totalMinutes>0).sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
                   const nextAge=sortedY2.find(f=>(new Date(f.date+'T'+f.startTaxi+':00').getTime()+86400000)>now2);
                   const nextAgeMs=nextAge?(new Date(nextAge.date+'T'+nextAge.startTaxi+':00').getTime()+86400000):null;
                   const nextAgeStr=nextAgeMs?(()=>{const d=new Date(nextAgeMs);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');})():null;
-                  const tipText=`TODAY: ${fmtMin(tMins2)} (completed block time)\nYEST LEFT: ${fmtMin(yMins2)} (yesterday still in 24h window)\n8-IN-24: ${fmtMin(tot2)} of 8:00 limit\nREMAINING: ${fmtMin(rem2)} before FAR 135.265 limit${nextAgeStr?`\nNext clears: ${nextAgeStr} · ${nextAge?.origin||'?'}→${nextAge?.destination||'?'}`:''}`;
-                  return <Tip text={tipText} width={260}>
+                  const tipLines=[`TODAY: ${fmtMin(tMins2)}`,`YEST LEFT: ${fmtMin(yMins2)}`,`8-IN-24: ${fmtMin(tot2)} of 8:00`,`REMAINING: ${fmtMin(rem2)}`,nextAgeStr?`Next clears: ${nextAgeStr} · ${nextAge?.origin||'?'}→${nextAge?.destination||'?'}`:null].filter(Boolean).join('\n');
+                  return <Tip text={tipLines} width={260}>
                   <div style={{display:"flex",alignItems:"center",gap:4,cursor:"help",
                     background:"rgba(8,14,22,0.8)",borderRadius:4,padding:"3px 8px",
                     border:`1px solid ${totCol}44`}}>
                     <span style={{fontSize:11,color:"#5a7a8a",fontFamily:"monospace"}}>TODAY</span>
-                    <span style={{fontSize:14,color:"#4a9eff",fontFamily:"monospace",fontWeight:700}}>{fmtMin(tMins2)}</span>
+                    <span style={{fontSize:14,color:"#4a9eff",fontFamily:"monospace",fontWeight:700}}>
+                      {inTodayBlock2?fmtSec(tMins2,true):fmtMin(tMins2)}{inTodayBlock2&&<span style={{fontSize:9,color:"#ffd740"}}>&#9654;</span>}
+                    </span>
                     <span style={{fontSize:12,color:"#2a3a4a"}}>+</span>
                     <span style={{fontSize:11,color:"#5a7a8a",fontFamily:"monospace"}}>YEST</span>
-                    <span style={{fontSize:14,color:yMins2>0?"#ff9944":"#2a3a4a",fontFamily:"monospace",fontWeight:700}}>{yMins2>0?fmtMin(yMins2):"—"}</span>
+                    <span style={{fontSize:14,color:yMins2>0?"#ff9944":"#2a3a4a",fontFamily:"monospace",fontWeight:700}}>
+                      {yMins2>0?(windowInYest2?fmtSec(yMins2,false):fmtMin(yMins2)):"—"}{windowInYest2&&yMins2>0&&<span style={{fontSize:9,color:"#ff9944"}}>&#9660;</span>}
+                    </span>
                     <span style={{fontSize:12,color:"#2a3a4a"}}>=</span>
                     <span style={{fontSize:15,color:totCol,fontFamily:"monospace",fontWeight:700}}>{fmtMin(tot2)}</span>
                     <span style={{fontSize:12,color:"#2a3a4a"}}>→</span>
                     <span style={{fontSize:14,color:rem2<=0?SC.red:rem2<=60?SC.orange:SC.green,fontFamily:"monospace",fontWeight:700}}>{fmtMin(rem2)}</span>
                     {nextAgeStr&&<span style={{fontSize:11,color:"#ffd740",fontFamily:"monospace",marginLeft:2}}>⏳{nextAgeStr}</span>}
                   </div></Tip>;
-                })()}
-              </div>
+                })()}              </div>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                 <span style={{fontSize:24,color:isOpen?"#5aaa8a":"#4a9eff",fontWeight:700,transition:"color 0.15s"}}>{isOpen?"▲":"▼"}</span>
               </div>
