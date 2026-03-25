@@ -1900,10 +1900,16 @@ const addMinToHHMM = addMinToTime;
 
 function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   if(!flights||!flights.length) return {
-    rolling:0, rollingProjected:0, status:"green", statusProjected:"green",
-    enrouteLegs:0, todayLegs:0, todayMins:0, todayFlights:[],
-    tomorrowFlights:[], maxDutyMins:0, minDutyMins:0, avgDutyMins:0, dutyDaysCount:0, maxFltMins:0, q1Hrs:0, legStats:null,
-    dutyDays:{}, projectedDutyDays:{}
+    rolling:0, rollingProjected:0, status:"green", statusProjected:"green", statusNextDay:"green",
+    enrouteLegs:0, schedLegs:0, todayLegs:0, todayMins:0, todaySchedMins:0,
+    todayFlights:[], tomorrowFlights:[], yesterdayFlights:[], lastWorkedFlights:[], lastWorkedDate:null,
+    maxDutyMins:0, minDutyMins:0, avgDutyMins:0, dutyDaysCount:0, maxFltMins:0,
+    q1Hrs:0, monthHrs:0, halfYrHrs:0, annualHrs:0,
+    consecutiveDays:0, legStats:null,
+    dutyDays:{}, projectedDutyDays:{},
+    windowStartMs:Date.now()-86400000, projWindowEndMs:Date.now(),
+    inWindowFlights:[], enrouteFlights:[], schedInWindow:[], nextDayFlights:[],
+    nextDayProjected:0, noGoMs:null, clearsAtMs:null,
   };
 
   const todayStr    = today();
@@ -3004,14 +3010,22 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const akNowForEnr = new Date(now);
                   const akNowHHMMEnr = String(akNowForEnr.getHours()).padStart(2,'0')+':'+String(akNowForEnr.getMinutes()).padStart(2,'0');
                   const todayStr2 = todayStr;
-                  const enrActual = (c.enrouteFlights||[]).reduce((s,f)=>{
+                  // Track both raw elapsed and the cap per en-route flight so we
+                  // know whether ANY flight is still actively accruing (below its ETA cap).
+                  let enrActual=0, anyEnrBelowCap=false;
+                  for(const f of (c.enrouteFlights||[])){
                     const offTime=f.startTaxi||f.schedOff;
-                    if(offTime&&f.date){const bMs=new Date(f.date+'T'+offTime+':00').getTime();const el=Math.max(0,(now-bMs)/60000);return s+Math.min(el,(f.totalMinutes||f._schedDurMins||120));}
-                    return s+(f.totalMinutes||0);
-                  },0);
+                    if(offTime&&f.date){
+                      const bMs=new Date(f.date+'T'+offTime+':00').getTime();
+                      const el=Math.max(0,(now-bMs)/60000);
+                      const cap=f.totalMinutes||f._schedDurMins||120;
+                      enrActual+=Math.min(el,cap);
+                      if(el<cap) anyEnrBelowCap=true;
+                    } else { enrActual+=(f.totalMinutes||0); }
+                  }
                   const enrSchedLive = c.todayFlights
                     .filter(f=>f._status==='scheduled'&&f.schedOff&&f.schedOff<=akNowHHMMEnr&&f._schedDurMins>0)
-                    .reduce((s,f)=>{const sBMs=new Date(todayStr2+'T'+f.schedOff+':00').getTime();return s+Math.min(Math.max(0,(now-sBMs)/60000),(f._schedDurMins||60)+30);},0);
+                    .reduce((s,f)=>{const sBMs=new Date(todayStr2+'T'+f.schedOff+':00').getTime();return s+Math.min(Math.max(0,(now-sBMs)/60000),(f._schedDurMins||60));},0);
                   // Only add enrSchedLive to the live total when there are actual
                   // en-route flights. Otherwise it grows every clock tick (elapsed time
                   // since schedOff), causing the total to keep counting after landing.
@@ -3020,7 +3034,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const enrTotalSecs=Math.floor(enrMins*60);
                   const enrMinsRounded=Math.floor(enrTotalSecs/60);
                   const isLiveEstimate=enrSchedLive>0&&enrActual===0;
-                  const isEnrLive=enrActual>0;
+                  const isEnrLive=anyEnrBelowCap; // only tick while below ETA cap
                   const todayCompletedMins=todayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
                   const todayFlyingMins=todayCompletedMins+enrMinsRounded;
                   const yesterdayMins=yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
