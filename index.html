@@ -1696,8 +1696,11 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew }) 
       </button>
       <input ref={logRef} type="file" accept=".xlsx,.xls" onChange={e=>{setLogFile(e.target.files[0]);setPreview(null);}} style={{display:"none"}}/>
 
-      {logFile&&<button onClick={handleFlightLogExport} disabled={parsing} style={{...S.btn("primary"),width:"100%",padding:14,fontSize:21,marginBottom:12}}>
-        {parsing?"⏳ PARSING...":"⚡ ANALYZE FLIGHT LOG"}
+      {logFile&&<button onClick={()=>{
+        if(!loaded){setError("⏳ Still syncing stored data — wait a moment before importing to avoid losing historical hours.");return;}
+        handleFlightLogExport();
+      }} disabled={parsing} style={{...S.btn("primary"),width:"100%",padding:14,fontSize:21,marginBottom:12}}>
+        {parsing?"⏳ PARSING...":loaded?"⚡ ANALYZE FLIGHT LOG":"⏳ SYNCING DATA…"}
       </button>}
 
       {preview?.pilotData&&<>
@@ -3061,7 +3064,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const erasesDisplay=msLeft?`${hLeft>0?hLeft+'h ':''}${String(mLeft).padStart(2,'0')}:${String(sLeft).padStart(2,'0')}`:"—";
                   return <div style={{background:"rgba(8,14,22,0.9)",border:`1px solid \${barCol}33`,borderRadius:6,padding:"8px 10px",marginBottom:6}}>
                     <div style={{fontSize:12,color:"#5a7a8a",fontWeight:700,letterSpacing:"0.08em",marginBottom:5}}>ROLLING 8-IN-24</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr",gap:0,alignItems:"center",marginBottom:5}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr",gap:0,alignItems:"center",marginBottom:5}}>
                       {/* TODAY */}
                       <div style={{textAlign:"center"}}>
                         <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>{isEstimate?"TODAY~":"TODAY"}</div>
@@ -3079,9 +3082,13 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                       {/* 8-IN-24 — live: today completed + live en-route elapsed + yesterday carry */}
                       {(()=>{
                         // Only add remaining SCHEDULED legs (not en-route) — en-route elapsed
-                        // time is already captured in totalLive via enrMinsRounded, so adding
-                        // enrouteMins from the backend would double-count the active flight.
-                        const schedMinsOnly=(c.schedInWindow||[]).reduce((s,f)=>s+(f.totalMinutes||0),0);
+                        // time is already captured in totalLive via enrMinsRounded.
+                        // Re-filter c.schedInWindow by current clock time: the backend snapshot
+                        // may include legs whose schedOff has already passed (departed but
+                        // data not yet updated, or no-shows). Counting them inflates +EN-ROUTE.
+                        const schedMinsOnly=(c.schedInWindow||[])
+                          .filter(f=>f.startTaxi&&f.startTaxi>akNowHHMMEnr)
+                          .reduce((s,f)=>s+(f.totalMinutes||0),0);
                         const liveProjected = totalLive + schedMinsOnly;
                         const liveCol = totalLive>=480?SC.red:totalLive>=390?SC.orange:totalLive>=300?"#ffd740":SC.green;
                         const projCol = liveProjected>=480?SC.red:liveProjected>=390?SC.orange:SC.green;
@@ -3110,6 +3117,21 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         </>;
                       })()}
                       <div style={{color:"#2a3a4a",fontSize:18,fontWeight:300,textAlign:"center",padding:"0 3px"}}>⏳</div>
+                      {/* WINDOW STATUS */}
+                      {(()=>{
+                        const isErasing=yesterdayMins>0&&msLeft!==null;
+                        const isFlying=isEnrLive;
+                        let statusLabel,statusVal,statusCol;
+                        if(isErasing&&isFlying){statusLabel="STATUS";statusVal="≈ STEADY";statusCol="#ffd740";}
+                        else if(isErasing){statusLabel="STATUS";statusVal="↓ ERASING";statusCol="#ff9944";}
+                        else if(isFlying){statusLabel="STATUS";statusVal="↑ ACCRUING";statusCol="#4a9eff";}
+                        else{statusLabel="STATUS";statusVal="—";statusCol="#2a3a4a";}
+                        return <div style={{textAlign:"center"}}>
+                          <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>{statusLabel}</div>
+                          <div style={{fontSize:14,fontWeight:700,color:statusCol,fontFamily:"monospace",letterSpacing:"0.04em"}}>{statusVal}</div>
+                        </div>;
+                      })()}
+                      <div style={{color:"#2a3a4a",fontSize:14,fontWeight:300,textAlign:"center",padding:"0 3px"}}></div>
                       {/* ERASES IN / NEXT CLEARS */}
                       <div style={{textAlign:"center"}}>
                         <div style={{fontSize:12,color:msLeft&&(eraseLabel==="NEXT CLEARS")?"#ff9944":"#7a9ab8",marginBottom:1}}>{eraseLabel}</div>
@@ -3139,14 +3161,26 @@ Part 135 limit: 500 hours per quarter."/>
                     color={(c.halfYrHrs||0)>=900?SC.red:(c.halfYrHrs||0)>=800?SC.orange:"#d0dae8"}
                     tip="Block hours over the last two calendar quarters (rolling 6-month).
 Useful for tracking mid-year pacing."/>
-                  <StatCell label="ANNUAL" value={(c.annualHrs||0).toFixed(0)+"h"}
-                    color={(c.annualHrs||0)>=1200?SC.red:(c.annualHrs||0)>=1000?SC.orange:"#d0dae8"}
-                    tip="Block hours this calendar year.
-Part 135 limit: 1,200 hours per year."/>
+                  {(()=>{
+                    const allPF=flights.filter(f=>(f._pilot||f.pilot||')===(pd?.username||')); 
+                    const earliest=[...allPF].sort((a,b)=>a.date.localeCompare(b.date))[0]?.date||null;
+                    const yr=new Date().getFullYear();
+                    const ok=!earliest||earliest<=`${yr}-01-01`;
+                    return <StatCell label={'ANNUAL'+(ok?'':'⚠')} value={(c.annualHrs||0).toFixed(0)+'h'}
+                    color={(c.annualHrs||0)>=1200?SC.red:(c.annualHrs||0)>=1000?SC.orange:ok?'#d0dae8':'#ffd740'}
+                    tip={earliest?`Earliest data: ${earliest} — annual hrs ${ok?'complete':'⚠ understated, upload full-year export to correct'}`:'No flights loaded'}/>
+                  ;})()}
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
-                  <StatCell label="ANNUAL"    value={(c.annualHrs||0).toFixed(0)+"h"} color={(c.annualHrs||0)>=1200?SC.red:(c.annualHrs||0)>=1000?SC.orange:"#d0dae8"}
-                  tip="Total block hours this calendar year.\nPart 135 annual limit: 1,200 hours."/>
+                  {(()=>{
+                  const allPF=flights.filter(f=>(f._pilot||f.pilot||'')===(pd?.username||''));
+                  const earliest=[...allPF].sort((a,b)=>a.date.localeCompare(b.date))[0]?.date||null;
+                  const yr=new Date().getFullYear();
+                  const ok=!earliest||earliest<=`${yr}-01-01`;
+                  return <StatCell label={"ANNUAL"+(ok?"":"\u26a0")} value={(c.annualHrs||0).toFixed(0)+"h"}
+                  color={(c.annualHrs||0)>=1200?SC.red:(c.annualHrs||0)>=1000?SC.orange:ok?"#d0dae8":"#ffd740"}
+                  tip={earliest?`Earliest data: ${earliest} \u2014 annual hrs ${ok?"complete":"\u26a0 understated, upload full-year export to correct"}`:"No flights loaded"}/>;
+                })()}
                   <StatCell label="LAST WORKED" value={c.lastWorkedDate||"—"} color="#8aaabb"
                   tip="Most recent date with at least one completed flight."/>
                   <StatCell label="DUTY DAYS" value={c.dutyDaysCount||"—"} color="#8aaabb"
