@@ -3207,27 +3207,6 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   </div>;
                 })()}
 
-                {/* ── TURN TIME WARNINGS ── */}
-                {(()=>{
-                  const allTodayTmrw = [...c.todayFlights, ...c.tomorrowFlights];
-                  const warnings = getTurnWarnings(allTodayTmrw);
-                  if(!warnings.length) return null;
-                  return <div style={{background:"rgba(255,109,0,0.08)",borderRadius:6,
-                    padding:"8px 10px",marginBottom:8,border:"1px solid rgba(255,109,0,0.25)"}}>
-                    <div style={{fontSize:14,fontWeight:700,color:SC.orange,
-                      letterSpacing:"0.08em",marginBottom:5}}>⚠ TIGHT TURNS</div>
-                    {warnings.map((w,i)=>(
-                      <div key={i} style={{display:"flex",justifyContent:"space-between",
-                        fontSize:15,padding:"2px 0",borderBottom:i<warnings.length-1?"1px solid rgba(255,109,0,0.1)":"none"}}>
-                        <span style={{color:"#c0c0a0"}}>{w.at} — {w.between}</span>
-                        <span style={{color:w.turn<5?SC.red:SC.orange,fontWeight:700}}>
-                          {w.turn}m turn ({w.landTime}→{w.depTime})
-                        </span>
-                      </div>
-                    ))}
-                  </div>;
-                })()}
-
                 {/* ── 3-DAY STACKED TIMELINE ── */}
                 {(()=>{
                   // Zoom-aware timeline bounds — always centered on Alaska NOW
@@ -3934,6 +3913,27 @@ End: ${endReason}`;
                     </div>}
                   </div>
                 ))}
+                })()}
+
+                {/* ── TURN TIME WARNINGS ── */}
+                {(()=>{
+                  const allTodayTmrw = [...c.todayFlights, ...c.tomorrowFlights];
+                  const warnings = getTurnWarnings(allTodayTmrw);
+                  if(!warnings.length) return null;
+                  return <div style={{background:"rgba(255,109,0,0.08)",borderRadius:6,
+                    padding:"8px 10px",marginBottom:8,border:"1px solid rgba(255,109,0,0.25)"}}>
+                    <div style={{fontSize:14,fontWeight:700,color:SC.orange,
+                      letterSpacing:"0.08em",marginBottom:5}}>⚠ TIGHT TURNS</div>
+                    {warnings.map((w,i)=>(
+                      <div key={i} style={{display:"flex",justifyContent:"space-between",
+                        fontSize:15,padding:"2px 0",borderBottom:i<warnings.length-1?"1px solid rgba(255,109,0,0.1)":"none"}}>
+                        <span style={{color:"#c0c0a0"}}>{w.at} — {w.between}</span>
+                        <span style={{color:w.turn<5?SC.red:SC.orange,fontWeight:700}}>
+                          {w.turn}m turn ({w.landTime}→{w.depTime})
+                        </span>
+                      </div>
+                    ))}
+                  </div>;
                 })()}
 
                                 {/* ── YESTERDAY / TODAY / TOMORROW — collapsible ── */}
