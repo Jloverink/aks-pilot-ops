@@ -3018,7 +3018,10 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const enrTotalSecs=Math.floor(enrMins*60);
                   const enrMinsRounded=Math.floor(enrTotalSecs/60);
                   const isLiveEstimate=enrSchedLive>0&&enrActual===0;
-                  const isEnrLive=enrTotalSecs>0;
+                  // Only tick live when there are ACTUAL en-route flights.
+                  // enrSchedLive is a static fallback estimate — it should never
+                  // drive the live clock (which would keep counting after landing).
+                  const isEnrLive=enrActual>0;
                   const todayCompletedMins=todayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
                   const todayFlyingMins=todayCompletedMins+enrMinsRounded;
                   const yesterdayMins=yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
