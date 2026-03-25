@@ -2959,156 +2959,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
           {/* ── EXPANDED DETAIL ── */}
           {isOpen&&<div style={{...S.card,borderColor:col,background:"#080b0f",marginTop:2,padding:"12px 14px"}}>
 
-            {/* ── QUICK STATS GRID ── */}
-            {(()=>{
-              const yf = (c.yesterdayFlights||[]).sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
-              const todayComp = c.todayFlights.filter(f=>f._status==="completed").sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
-              const todayActive = c.todayFlights.filter(f=>f._status!=="completed").sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
-              const tmrwSorted = [...c.tomorrowFlights].filter(f=>f.startTaxi).sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
-
-              // Yesterday totals
-              const yestFltMins = yf.reduce((s,f)=>s+(f.totalMinutes||0),0);
-              const yestDutyStart = yestActDuty?.dutyStart;
-              const yestDutyEnd   = yestActDuty?.dutyEnd;
-              const yestDutyMins  = yestActDuty?.dutyMins||0;
-
-              // Today totals
-              const todayFltMins = todayComp.reduce((s,f)=>s+(f.totalMinutes||0),0);
-              const todayDutyStart = todayActDuty?.dutyStart || todayProjDuty?.dutyStart;
-              // Projected end: 1hr after last scheduled arrival
-              const lastActive = [...todayActive].reverse()[0];
-              const todayProjEnd = todayActDuty?.dutyEnd || (lastActive
-                ? addMinToTime(lastActive.startTaxi||'',(lastActive.totalMinutes||0)+60)
-                : todayProjDuty?.dutyEnd);
-              const todayDutyMins = todayActDuty?.dutyMins || (todayDutyStart&&todayProjEnd?calcMin(todayDutyStart,todayProjEnd):0);
-
-              // Tomorrow
-              const tmrwStart = tmrwProjDuty?.dutyStart || (tmrwSorted.length?addMinToTime(tmrwSorted[0].startTaxi,-60):null);
-              const tmrwFltMins = tmrwSorted.reduce((s,f)=>s+(f.totalMinutes||0),0);
-
-              // Rest between today end and tomorrow start
-              const todayEndForRest = todayProjEnd || yestDutyEnd;
-              let restMins = null;
-              if(todayProjEnd && tmrwStart) {
-                restMins = calcMin(todayProjEnd, tmrwStart);
-                if(restMins < 0) restMins += 1440; // crosses midnight
-              }
-              const restOk = restMins === null ? null : restMins >= 540; // 9hr min rest
-
-              const StatCell = ({label,value,sub,color,warn,tip}) => (
-                <Tip text={tip||""} width={200}>
-                  <div style={{background:"#0a1018",borderRadius:5,padding:"9px 10px",
-                    border:`1px solid ${warn?"#ff6d0055":"#1a2530"}`,cursor:tip?"help":"default",
-                    width:"100%"}}>
-                    <div style={{fontSize:14,color:"#8aaabb",letterSpacing:"0.06em",marginBottom:3,fontWeight:600}}>
-                      {label}{tip&&<span style={{color:"#3a5a6a",marginLeft:3}}>?</span>}
-                    </div>
-                    <div style={{fontSize:22,fontWeight:700,color:color||"#d0dae8",lineHeight:1}}>{value||"—"}</div>
-                    {sub&&<div style={{fontSize:14,color:warn?"#ff9944":"#6a8aaa",marginTop:3}}>{sub}</div>}
-                  </div>
-                </Tip>
-              );
-
-              return <>
-                {/* Row 1: Yesterday */}
-                <div style={{fontSize:15,color:"#6a8aaa",fontWeight:700,letterSpacing:"0.1em",marginBottom:5,marginTop:2}}>
-                  YESTERDAY — {yesterdayStr}
-                </div>
-                {(()=>{
-                  const yestSchedMins = yf.reduce((s,f)=>s+(f._schedDurMins||0),0)
-                    + (c.yesterdayFlights||[]).filter(f=>f._status!=="completed").reduce((s,f)=>s+(f._schedDurMins||0),0);
-                  const allYestFlights = [...(c.yesterdayFlights||[]), ...(c.flights||[]).filter(f=>f.date===yesterdayStr&&f._status!=="completed")];
-                  const yestSchedTotal = allYestFlights.reduce((s,f)=>{
-                    const d = f.schedOff&&f.schedOn ? calcMin(f.schedOff,f.schedOn) : (f._schedDurMins||0);
-                    return s+(d||0);
-                  },0);
-                  const diff = yestFltMins&&yestSchedTotal ? yestFltMins-yestSchedTotal : null;
-                  return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
-                    <StatCell label="DUTY" value={yestDutyStart&&yestDutyEnd?`${yestDutyStart}–${yestDutyEnd}`:"—"}
-                      color="#6a8aa8" sub={yestDutyMins?fmtMin(yestDutyMins)+" shift":null}
-                      tip="Start and end of duty period.\nDefined as first block-off to last block-on."/>
-                    <StatCell label="SCHED BLOCK" value={yestSchedTotal?fmtMin(yestSchedTotal):"—"} color="#7a9ab8"
-                      tip="Total Takeflite scheduled block time for yesterday.\nThis is the planned block time, not actual flown time."
-                      sub={yf.length+" legs"}/>
-                    <StatCell label="ACTUAL BLOCK" tip="Actual block time recorded in Takeflite from Hobbs/GPS data.\nSum of all completed legs for the day." value={yestFltMins?fmtMin(yestFltMins):"—"} color={yestFltMins?"#6aaa8a":"#3a5a5a"}
-                      sub={yf.length+" flown"}/>
-                    <StatCell label="DIFF" tip="Difference between scheduled and actual block time.\nGreen = ran under schedule, Orange/Red = ran over.\nUseful for identifying routes that are consistently mis-scheduled." value={diff===null?"—":diff>0?`+${fmtMin(diff)}`:fmtMin(diff)}
-                      color={diff===null?"#7a9ab0":Math.abs(diff)<=5?"#6aaa8a":diff>0?SC.orange:SC.green}
-                      sub={diff===null?null:diff>0?"ran over":"saved time"}
-                      tip="Actual block vs scheduled block.\nGreen = flew faster than scheduled.\nOrange = ran over schedule."/>
-                  </div>;
-                })()}
-
-                {/* Row 2: Today */}
-                <div style={{fontSize:15,color:"#9abada",fontWeight:700,letterSpacing:"0.1em",marginBottom:5}}>
-                  TODAY — {todayStr}
-                </div>
-                {(()=>{
-                  const allTodayFlights = c.todayFlights;
-                  const todaySchedTotal = allTodayFlights.reduce((s,f)=>{
-                    const d = f.schedOff&&f.schedOn ? calcMin(f.schedOff,f.schedOn) : (f._schedDurMins||0);
-                    return s+(d||0);
-                  },0);
-                  const diff = todayFltMins&&todaySchedTotal ? todayFltMins-todaySchedTotal : null;
-                  return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
-                    <StatCell label="DUTY" value={todayDutyStart?`${todayDutyStart}–${todayProjEnd||"…"}`:"—"}
-                      color="#b8c8d8" sub={todayDutyMins?fmtMin(todayDutyMins)+" est":null}/>
-                    <StatCell label="SCHED BLOCK" value={todaySchedTotal?fmtMin(todaySchedTotal):"—"} color="#7a9ab8"
-                      tip="Total Takeflite scheduled block time for today across all legs.\nIncludes both flown and yet-to-fly legs."
-                      sub={`${allTodayFlights.length} legs total`}/>
-                    <StatCell label="ACTUAL BLOCK" tip="Actual block time recorded in Takeflite from Hobbs/GPS data.\nSum of all completed legs for the day." value={todayFltMins?fmtMin(todayFltMins):"—"} color={SC.green}
-                      sub={todayComp.length?`${todayComp.length} flown`:null}/>
-                    <StatCell label="DIFF" tip="Difference between scheduled and actual block time.\nGreen = ran under schedule, Orange/Red = ran over.\nUseful for identifying routes that are consistently mis-scheduled." value={diff===null?"—":diff>0?`+${fmtMin(diff)}`:fmtMin(diff)}
-                      color={diff===null?"#7a9ab0":Math.abs(diff)<=5?"#6aaa8a":diff>0?SC.orange:SC.green}
-                      sub={diff===null?null:diff>0?"running over":"running ahead"}/>
-                  </div>;
-                })()}
-
-                {/* Row 3: Tomorrow + Rest */}
-                <div style={{fontSize:15,color:"#9abada",fontWeight:700,letterSpacing:"0.1em",marginBottom:5}}>
-                  TOMORROW — {tomorrowStr}
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
-                  <StatCell label="PROJ START" value={tmrwStart||"—"} color="#4a9eff"
-                      tip={`Projected duty start for tomorrow.\n${tmrwSorted.length?`1 hour before first scheduled departure (${tmrwSorted[0]?.schedOff||"—"}).`:"No flights scheduled — no duty projected."}\nAuto mode only; override with ✎ DUTY button.`}
-                    sub={tmrwStart?"1hr before first leg":null}
-                    tip="Projected duty start for tomorrow.\nDefault: 1 hour before first scheduled departure.\nCan be overridden using the ✎ ASSIGN DUTY button."/>
-                  <StatCell label="REST" tip={`Time between end of today's duty and start of tomorrow's duty.\nFAR Part 135 minimum: 9 hours.\nBelow 9hrs = cannot legally start tomorrow's duty.`} color={restMins===null?"#7a9ab0":restOk?SC.green:SC.red}
-                    value={restMins===null?"—":fmtMin(restMins)}
-                    warn={restMins!==null&&!restOk}
-                    sub={restMins===null?null:restOk?"✓ 9hr min met":"⚠ BELOW 9HR MIN"}/>
-                  <StatCell label="CONSEC DAYS" value={c.consecutiveDays||0}
-                      tip={`Consecutive days worked ending on the most recent worked date.\nPart 135 §135.273: maximum 7 consecutive days before a day off is required.\nCurrent streak: ${c.consecutiveDays||0} day${(c.consecutiveDays||0)!==1?"s":""}.`}
-                    color={c.consecutiveDays>=7?SC.red:c.consecutiveDays>=5?SC.orange:c.consecutiveDays>=4?"#ffd740":"#b8c8d8"}
-                    tip="Days worked in a row without a day off (consecutive days with completed flights).\nUsed in Flight Risk Assessment.\n4+ = yellow, 5+ = orange, 7+ = red."/>
-                </div>
-                {tmrwSorted.length>0&&(()=>{
-                  // Pure Takeflite scheduled block totals
-                  const schedTotal = tmrwSorted.reduce((s,f)=>{
-                    const d = f.schedOff&&f.schedOn ? calcMin(f.schedOff,f.schedOn) : (f._schedDurMins||f.totalMinutes||0);
-                    return s+(d||0);
-                  },0);
-                  return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:10}}>
-                    <StatCell label="SCHED BLOCK" value={schedTotal?fmtMin(schedTotal):"—"} color="#4a9eff"
-                      sub={`${tmrwSorted.length} legs · Takeflite`}/>
-                    <StatCell label="FIRST LEG"
-                      value={tmrwSorted[0]?.schedOff||tmrwSorted[0]?.startTaxi||"—"} color="#7a9ab8"
-                      tip={tmrwSorted[0]?`First departure tomorrow\n${tmrwSorted[0].origin||"?"}→${tmrwSorted[0].destination||"?"} · ${tmrwSorted[0].tailNumber||"—"}\nSched off: ${tmrwSorted[0].schedOff||"—"}`:"No flights scheduled tomorrow"}/>
-                    <StatCell label="LAST LAND" value={(()=>{
-                      const last=tmrwSorted[tmrwSorted.length-1];
-                      return last?.schedOn||addMinToTime(last?.schedOff||last?.startTaxi||'',(last?._schedDurMins||last?.totalMinutes||0))||"—";
-                    })()} color="#7a9ab8"
-                      tip={(()=>{
-                        const last=tmrwSorted[tmrwSorted.length-1];
-                        if(!last) return "No flights scheduled tomorrow";
-                        const landT=last.schedOn||addMinToTime(last.schedOff||last.startTaxi||'',(last._schedDurMins||last.totalMinutes||0));
-                        return `Last landing tomorrow\n${last.origin||"?"}→${last.destination||"?"} · ${last.tailNumber||"—"}\nEst arrival: ${landT||"—"}`;
-                      })()}/>
-                  </div>;
-                })()}
-                {!tmrwSorted.length&&<div style={{marginBottom:10}}/>}
-
-                {/* Row A: Live rolling window */}
+            {/* Row A: Live rolling window */}
                 {(()=>{
                   const now = clockMs;
                   const wallSec = Math.floor(now/1000)%60;
@@ -3336,141 +3187,6 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     </div>
                   </div>;
                 })()}
-
-                {/* Row B: Cumulative limits */}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
-                  <StatCell label="THIS MONTH" value={(c.monthHrs||0).toFixed(1)+"h"}
-                    color={(c.monthHrs||0)>=90?SC.orange:(c.monthHrs||0)>=80?"#ffd740":"#d0dae8"}
-                    tip="Block hours this calendar month.
-Part 135 limit: 100 hours per month."/>
-                  <StatCell label="THIS QTR" value={(c.q1Hrs||0).toFixed(1)+"h"}
-                    color={(c.q1Hrs||0)>=470?SC.red:(c.q1Hrs||0)>=420?SC.orange:"#d0dae8"}
-                    tip="Block hours this calendar quarter (Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec).
-Part 135 limit: 500 hours per quarter."/>
-                  <StatCell label="6 MONTHS" value={(c.halfYrHrs||0).toFixed(1)+"h"}
-                    color={(c.halfYrHrs||0)>=900?SC.red:(c.halfYrHrs||0)>=800?SC.orange:"#d0dae8"}
-                    tip="Block hours over the last two calendar quarters (rolling 6-month).
-Useful for tracking mid-year pacing."/>
-                  {(()=>{
-                    const allPF=pd.flights||[];
-                    const earliest=[...allPF].filter(f=>f._status==='completed').sort((a,b)=>a.date.localeCompare(b.date))[0]?.date||null;
-                    const yr=new Date().getFullYear();
-                    const ok=!earliest||earliest<=`${yr}-01-01`;
-                    return <StatCell label={'ANNUAL'+(ok?'':'⚠')} value={(c.annualHrs||0).toFixed(0)+'h'}
-                    color={(c.annualHrs||0)>=1200?SC.red:(c.annualHrs||0)>=1000?SC.orange:ok?'#d0dae8':'#ffd740'}
-                    tip={earliest?`Earliest data: ${earliest} — annual hrs ${ok?'complete':'⚠ understated, upload full-year export to correct'}`:'No flights loaded'}/>
-                  ;})()}
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
-                  
-                  <StatCell label="LAST WORKED" value={c.lastWorkedDate||"—"} color="#8aaabb"
-                  tip="Most recent date with at least one completed flight."/>
-                  <StatCell label="DUTY DAYS" value={c.dutyDaysCount||"—"} color="#8aaabb"
-                  tip="Number of days worked with recorded duty times in the current dataset."/>
-                </div>
-                {/* Duty day stats row */}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:10}}>
-                  <StatCell label="PEAK DUTY" value={c.maxDutyMins?fmtMin(c.maxDutyMins):"—"}
-                    color={c.maxDutyMins>=840?SC.red:c.maxDutyMins>=660?SC.orange:"#d0dae8"}
-                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the longest day."/>
-                  <StatCell label="AVG DUTY" value={c.avgDutyMins?fmtMin(c.avgDutyMins):"—"}
-                    color="#8aaabb"
-                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the average across all duty days."/>
-                  <StatCell label="SHORTEST DUTY" value={c.minDutyMins?fmtMin(c.minDutyMins):"—"}
-                    color="#6a9a7a"
-                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the shortest day."/>
-                </div>
-
-                {/* ── PILOT STATS ── */}
-                {c.legStats&&(()=>{
-                  const ls=c.legStats;
-                  const StatMini=({label,value,sub,color,tip})=>(
-                    <Tip text={tip||""} width={200}>
-                      <div style={{background:"#0a1018",borderRadius:4,padding:"7px 9px",
-                        border:"1px solid #1a2530",cursor:tip?"help":"default"}}>
-                        <div style={{fontSize:12,color:"#8aaabb",letterSpacing:"0.05em",marginBottom:2,fontWeight:600}}>
-                          {label}{tip&&<span style={{color:"#3a5a6a",marginLeft:2}}>?</span>}
-                        </div>
-                        <div style={{fontSize:21,fontWeight:700,color:color||"#d0dae8",lineHeight:1}}>{value}</div>
-                        {sub&&<div style={{fontSize:12,color:"#5a7a8a",marginTop:2}}>{sub}</div>}
-                      </div>
-                    </Tip>
-                  );
-
-                  const showPilotStats = !!(pilotStatsOpen[pd.username]);
-                  return <div style={{background:"#060a0e",borderRadius:6,marginBottom:8,
-                    border:"1px solid #1a2530",overflow:"visible"}}>
-                    <div onClick={e=>{e.stopPropagation();setPilotStatsOpen(p=>({...p,[pd.username]:!p[pd.username]}));}}
-                      style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                        padding:"8px 10px",cursor:"pointer",
-                        borderBottom:pilotStatsOpen[pd.username]?"1px solid #1a2530":"none",
-                        background:"rgba(74,158,255,0.04)",borderRadius:pilotStatsOpen[pd.username]?"6px 6px 0 0":"6px"}}>
-                      <span style={{fontSize:15,color:"#4a9eff",fontWeight:700,letterSpacing:"0.1em"}}>
-                        📊 PILOT STATS
-                      </span>
-                      <span style={{fontSize:20,color:showPilotStats?"#5aaa8a":"#4a9eff",fontWeight:700,transition:"color 0.15s"}}>{showPilotStats?"▼":"▶"}</span>
-                    </div>
-                    {showPilotStats&&<div style={{padding:"0 10px 10px"}}>
-
-                      {/* Daily flight time */}
-                      <div style={{fontSize:12,color:"#6a8aaa",fontWeight:700,letterSpacing:"0.08em",
-                        marginBottom:5,marginTop:4}}>DAILY FLIGHT TIME</div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:8}}>
-                        <StatMini label="MAX DAY FLT" value={fmtMin(ls.maxDayFltMins)} color={SC.green}
-                          tip="Highest total block time in a single day."/>
-                        <StatMini label="AVG DAY FLT" value={fmtMin(ls.avgDayFltMins)} color="#8aaabb"
-                          tip="Average total block time per working day."/>
-                        <StatMini label="MIN DAY FLT" value={fmtMin(ls.minDayFltMins)} color="#6a9a7a"
-                          tip="Lowest total block time on a day that had at least one flight."/>
-                      </div>
-
-                      {/* Daily leg counts */}
-                      <div style={{fontSize:12,color:"#6a8aaa",fontWeight:700,letterSpacing:"0.08em",
-                        marginBottom:5}}>DAILY LEG COUNT</div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:8}}>
-                        <StatMini label="MOST LEGS" value={ls.maxDayLegs} color={SC.green}
-                          tip="Most legs flown in a single day."/>
-                        <StatMini label="AVG LEGS/DAY" value={ls.avgDayLegs.toFixed(1)} color="#8aaabb"
-                          tip="Average legs per working day."/>
-                        <StatMini label="FEWEST LEGS" value={ls.minDayLegs} color="#6a9a7a"
-                          tip="Fewest legs on a day with at least one flight."/>
-                      </div>
-
-                      {/* Individual leg times */}
-                      <div style={{fontSize:12,color:"#6a8aaa",fontWeight:700,letterSpacing:"0.08em",
-                        marginBottom:5}}>INDIVIDUAL LEG</div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4}}>
-                        <StatMini label="LONGEST LEG" value={fmtMin(ls.maxLegMins)} color={SC.green}
-                          tip={ls.maxLegFlight?`${ls.maxLegFlight.origin}→${ls.maxLegFlight.destination} on ${ls.maxLegFlight.date}\n${fmtMin(ls.maxLegMins)} block · ${ls.maxLegFlight.tailNumber||"—"}`:"Longest single leg block time."}/>
-                        <StatMini label="AVG LEG" value={fmtMin(ls.avgLegMins)} color="#8aaabb"
-                          tip="Average block time per leg across all completed flights."/>
-                        <StatMini label="SHORTEST LEG" value={fmtMin(ls.minLegMins)} color="#6a9a7a"
-                          tip={ls.minLegFlight?`${ls.minLegFlight.origin}→${ls.minLegFlight.destination} on ${ls.minLegFlight.date}\n${fmtMin(ls.minLegMins)} block · ${ls.minLegFlight.tailNumber||"—"}`:"Shortest single leg block time."}/>
-                      </div>
-
-                    </div>}
-                  </div>;
-                })()}
-
-                {/* ── QUALIFICATION WARNINGS ── */}
-                {qualWarnings.length>0&&<div style={{background:"rgba(255,71,87,0.07)",
-                  borderRadius:6,padding:"8px 10px",marginBottom:8,
-                  border:"1px solid rgba(255,71,87,0.25)"}}>
-                  <div style={{fontSize:14,fontWeight:700,color:SC.red,letterSpacing:"0.08em",marginBottom:5}}>
-                    ⚠ QUALIFICATION WARNINGS
-                  </div>
-                  {qualWarnings.map((w,i)=>(
-                    <div key={i} style={{display:"flex",alignItems:"center",gap:6,
-                      fontSize:15,padding:"2px 0",
-                      borderBottom:i<qualWarnings.length-1?"1px solid rgba(255,71,87,0.1)":"none"}}>
-                      <span style={{fontSize:12,padding:"1px 4px",borderRadius:2,fontWeight:700,
-                        background:`${w.color}22`,color:w.color,border:`1px solid ${w.color}44`}}>
-                        {w.type==='aircraft'?'AIRCRAFT':w.type==='location'?'LOCATION':'IFR'}
-                      </span>
-                      <span style={{color:w.type==='ifr'?"#c0b060":"#c06060"}}>{w.msg}</span>
-                    </div>
-                  ))}
-                </div>}
 
                 {/* ── TURN TIME WARNINGS ── */}
                 {(()=>{
@@ -4200,6 +3916,301 @@ End: ${endReason}`;
                     </div>}
                   </div>
                 ))}
+
+                                {/* ── YESTERDAY / TODAY / TOMORROW — collapsible ── */}
+                <div onClick={e=>{e.stopPropagation();toggleSection(pd.username,'quickstats');}}
+                  style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",padding:"3px 0",marginBottom:4}}>
+                  <span style={{fontSize:12,fontWeight:700,letterSpacing:"0.1em",color:"#5a7a9a"}}>
+                    YESTERDAY · TODAY · TOMORROW
+                  </span>
+                  <span style={{fontSize:14,color:getSection(pd.username,'quickstats',true)?"#5aaa8a":"#4a9eff",fontWeight:700}}>
+                    {getSection(pd.username,'quickstats',true)?"▼":"▶"}
+                  </span>
+                </div>
+{/* ── QUICK STATS GRID ── */}
+            {(()=>{
+              if(!getSection(pd.username,'quickstats',true)) return null;
+              const yf = (c.yesterdayFlights||[]).sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
+              const todayComp = c.todayFlights.filter(f=>f._status==="completed").sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
+              const todayActive = c.todayFlights.filter(f=>f._status!=="completed").sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
+              const tmrwSorted = [...c.tomorrowFlights].filter(f=>f.startTaxi).sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
+
+              // Yesterday totals
+              const yestFltMins = yf.reduce((s,f)=>s+(f.totalMinutes||0),0);
+              const yestDutyStart = yestActDuty?.dutyStart;
+              const yestDutyEnd   = yestActDuty?.dutyEnd;
+              const yestDutyMins  = yestActDuty?.dutyMins||0;
+
+              // Today totals
+              const todayFltMins = todayComp.reduce((s,f)=>s+(f.totalMinutes||0),0);
+              const todayDutyStart = todayActDuty?.dutyStart || todayProjDuty?.dutyStart;
+              // Projected end: 1hr after last scheduled arrival
+              const lastActive = [...todayActive].reverse()[0];
+              const todayProjEnd = todayActDuty?.dutyEnd || (lastActive
+                ? addMinToTime(lastActive.startTaxi||'',(lastActive.totalMinutes||0)+60)
+                : todayProjDuty?.dutyEnd);
+              const todayDutyMins = todayActDuty?.dutyMins || (todayDutyStart&&todayProjEnd?calcMin(todayDutyStart,todayProjEnd):0);
+
+              // Tomorrow
+              const tmrwStart = tmrwProjDuty?.dutyStart || (tmrwSorted.length?addMinToTime(tmrwSorted[0].startTaxi,-60):null);
+              const tmrwFltMins = tmrwSorted.reduce((s,f)=>s+(f.totalMinutes||0),0);
+
+              // Rest between today end and tomorrow start
+              const todayEndForRest = todayProjEnd || yestDutyEnd;
+              let restMins = null;
+              if(todayProjEnd && tmrwStart) {
+                restMins = calcMin(todayProjEnd, tmrwStart);
+                if(restMins < 0) restMins += 1440; // crosses midnight
+              }
+              const restOk = restMins === null ? null : restMins >= 540; // 9hr min rest
+
+              const StatCell = ({label,value,sub,color,warn,tip}) => (
+                <Tip text={tip||""} width={200}>
+                  <div style={{background:"#0a1018",borderRadius:5,padding:"9px 10px",
+                    border:`1px solid ${warn?"#ff6d0055":"#1a2530"}`,cursor:tip?"help":"default",
+                    width:"100%"}}>
+                    <div style={{fontSize:14,color:"#8aaabb",letterSpacing:"0.06em",marginBottom:3,fontWeight:600}}>
+                      {label}{tip&&<span style={{color:"#3a5a6a",marginLeft:3}}>?</span>}
+                    </div>
+                    <div style={{fontSize:22,fontWeight:700,color:color||"#d0dae8",lineHeight:1}}>{value||"—"}</div>
+                    {sub&&<div style={{fontSize:14,color:warn?"#ff9944":"#6a8aaa",marginTop:3}}>{sub}</div>}
+                  </div>
+                </Tip>
+              );
+
+              return <>
+                {/* Row 1: Yesterday */}
+                <div style={{fontSize:15,color:"#6a8aaa",fontWeight:700,letterSpacing:"0.1em",marginBottom:5,marginTop:2}}>
+                  YESTERDAY — {yesterdayStr}
+                </div>
+                {(()=>{
+                  const yestSchedMins = yf.reduce((s,f)=>s+(f._schedDurMins||0),0)
+                    + (c.yesterdayFlights||[]).filter(f=>f._status!=="completed").reduce((s,f)=>s+(f._schedDurMins||0),0);
+                  const allYestFlights = [...(c.yesterdayFlights||[]), ...(c.flights||[]).filter(f=>f.date===yesterdayStr&&f._status!=="completed")];
+                  const yestSchedTotal = allYestFlights.reduce((s,f)=>{
+                    const d = f.schedOff&&f.schedOn ? calcMin(f.schedOff,f.schedOn) : (f._schedDurMins||0);
+                    return s+(d||0);
+                  },0);
+                  const diff = yestFltMins&&yestSchedTotal ? yestFltMins-yestSchedTotal : null;
+                  return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                    <StatCell label="DUTY" value={yestDutyStart&&yestDutyEnd?`${yestDutyStart}–${yestDutyEnd}`:"—"}
+                      color="#6a8aa8" sub={yestDutyMins?fmtMin(yestDutyMins)+" shift":null}
+                      tip="Start and end of duty period.\nDefined as first block-off to last block-on."/>
+                    <StatCell label="SCHED BLOCK" value={yestSchedTotal?fmtMin(yestSchedTotal):"—"} color="#7a9ab8"
+                      tip="Total Takeflite scheduled block time for yesterday.\nThis is the planned block time, not actual flown time."
+                      sub={yf.length+" legs"}/>
+                    <StatCell label="ACTUAL BLOCK" tip="Actual block time recorded in Takeflite from Hobbs/GPS data.\nSum of all completed legs for the day." value={yestFltMins?fmtMin(yestFltMins):"—"} color={yestFltMins?"#6aaa8a":"#3a5a5a"}
+                      sub={yf.length+" flown"}/>
+                    <StatCell label="DIFF" tip="Difference between scheduled and actual block time.\nGreen = ran under schedule, Orange/Red = ran over.\nUseful for identifying routes that are consistently mis-scheduled." value={diff===null?"—":diff>0?`+${fmtMin(diff)}`:fmtMin(diff)}
+                      color={diff===null?"#7a9ab0":Math.abs(diff)<=5?"#6aaa8a":diff>0?SC.orange:SC.green}
+                      sub={diff===null?null:diff>0?"ran over":"saved time"}
+                      tip="Actual block vs scheduled block.\nGreen = flew faster than scheduled.\nOrange = ran over schedule."/>
+                  </div>;
+                })()}
+
+                {/* Row 2: Today */}
+                <div style={{fontSize:15,color:"#9abada",fontWeight:700,letterSpacing:"0.1em",marginBottom:5}}>
+                  TODAY — {todayStr}
+                </div>
+                {(()=>{
+                  const allTodayFlights = c.todayFlights;
+                  const todaySchedTotal = allTodayFlights.reduce((s,f)=>{
+                    const d = f.schedOff&&f.schedOn ? calcMin(f.schedOff,f.schedOn) : (f._schedDurMins||0);
+                    return s+(d||0);
+                  },0);
+                  const diff = todayFltMins&&todaySchedTotal ? todayFltMins-todaySchedTotal : null;
+                  return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                    <StatCell label="DUTY" value={todayDutyStart?`${todayDutyStart}–${todayProjEnd||"…"}`:"—"}
+                      color="#b8c8d8" sub={todayDutyMins?fmtMin(todayDutyMins)+" est":null}/>
+                    <StatCell label="SCHED BLOCK" value={todaySchedTotal?fmtMin(todaySchedTotal):"—"} color="#7a9ab8"
+                      tip="Total Takeflite scheduled block time for today across all legs.\nIncludes both flown and yet-to-fly legs."
+                      sub={`${allTodayFlights.length} legs total`}/>
+                    <StatCell label="ACTUAL BLOCK" tip="Actual block time recorded in Takeflite from Hobbs/GPS data.\nSum of all completed legs for the day." value={todayFltMins?fmtMin(todayFltMins):"—"} color={SC.green}
+                      sub={todayComp.length?`${todayComp.length} flown`:null}/>
+                    <StatCell label="DIFF" tip="Difference between scheduled and actual block time.\nGreen = ran under schedule, Orange/Red = ran over.\nUseful for identifying routes that are consistently mis-scheduled." value={diff===null?"—":diff>0?`+${fmtMin(diff)}`:fmtMin(diff)}
+                      color={diff===null?"#7a9ab0":Math.abs(diff)<=5?"#6aaa8a":diff>0?SC.orange:SC.green}
+                      sub={diff===null?null:diff>0?"running over":"running ahead"}/>
+                  </div>;
+                })()}
+
+                {/* Row 3: Tomorrow + Rest */}
+                <div style={{fontSize:15,color:"#9abada",fontWeight:700,letterSpacing:"0.1em",marginBottom:5}}>
+                  TOMORROW — {tomorrowStr}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
+                  <StatCell label="PROJ START" value={tmrwStart||"—"} color="#4a9eff"
+                      tip={`Projected duty start for tomorrow.\n${tmrwSorted.length?`1 hour before first scheduled departure (${tmrwSorted[0]?.schedOff||"—"}).`:"No flights scheduled — no duty projected."}\nAuto mode only; override with ✎ DUTY button.`}
+                    sub={tmrwStart?"1hr before first leg":null}
+                    tip="Projected duty start for tomorrow.\nDefault: 1 hour before first scheduled departure.\nCan be overridden using the ✎ ASSIGN DUTY button."/>
+                  <StatCell label="REST" tip={`Time between end of today's duty and start of tomorrow's duty.\nFAR Part 135 minimum: 9 hours.\nBelow 9hrs = cannot legally start tomorrow's duty.`} color={restMins===null?"#7a9ab0":restOk?SC.green:SC.red}
+                    value={restMins===null?"—":fmtMin(restMins)}
+                    warn={restMins!==null&&!restOk}
+                    sub={restMins===null?null:restOk?"✓ 9hr min met":"⚠ BELOW 9HR MIN"}/>
+                  <StatCell label="CONSEC DAYS" value={c.consecutiveDays||0}
+                      tip={`Consecutive days worked ending on the most recent worked date.\nPart 135 §135.273: maximum 7 consecutive days before a day off is required.\nCurrent streak: ${c.consecutiveDays||0} day${(c.consecutiveDays||0)!==1?"s":""}.`}
+                    color={c.consecutiveDays>=7?SC.red:c.consecutiveDays>=5?SC.orange:c.consecutiveDays>=4?"#ffd740":"#b8c8d8"}
+                    tip="Days worked in a row without a day off (consecutive days with completed flights).\nUsed in Flight Risk Assessment.\n4+ = yellow, 5+ = orange, 7+ = red."/>
+                </div>
+                {tmrwSorted.length>0&&(()=>{
+                  // Pure Takeflite scheduled block totals
+                  const schedTotal = tmrwSorted.reduce((s,f)=>{
+                    const d = f.schedOff&&f.schedOn ? calcMin(f.schedOff,f.schedOn) : (f._schedDurMins||f.totalMinutes||0);
+                    return s+(d||0);
+                  },0);
+                  return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:10}}>
+                    <StatCell label="SCHED BLOCK" value={schedTotal?fmtMin(schedTotal):"—"} color="#4a9eff"
+                      sub={`${tmrwSorted.length} legs · Takeflite`}/>
+                    <StatCell label="FIRST LEG"
+                      value={tmrwSorted[0]?.schedOff||tmrwSorted[0]?.startTaxi||"—"} color="#7a9ab8"
+                      tip={tmrwSorted[0]?`First departure tomorrow\n${tmrwSorted[0].origin||"?"}→${tmrwSorted[0].destination||"?"} · ${tmrwSorted[0].tailNumber||"—"}\nSched off: ${tmrwSorted[0].schedOff||"—"}`:"No flights scheduled tomorrow"}/>
+                    <StatCell label="LAST LAND" value={(()=>{
+                      const last=tmrwSorted[tmrwSorted.length-1];
+                      return last?.schedOn||addMinToTime(last?.schedOff||last?.startTaxi||'',(last?._schedDurMins||last?.totalMinutes||0))||"—";
+                    })()} color="#7a9ab8"
+                      tip={(()=>{
+                        const last=tmrwSorted[tmrwSorted.length-1];
+                        if(!last) return "No flights scheduled tomorrow";
+                        const landT=last.schedOn||addMinToTime(last.schedOff||last.startTaxi||'',(last._schedDurMins||last.totalMinutes||0));
+                        return `Last landing tomorrow\n${last.origin||"?"}→${last.destination||"?"} · ${last.tailNumber||"—"}\nEst arrival: ${landT||"—"}`;
+                      })()}/>
+                  </div>;
+                })()}
+                {!tmrwSorted.length&&<div style={{marginBottom:10}}/>}
+
+                {/* Row B: Cumulative limits */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                  <StatCell label="THIS MONTH" value={(c.monthHrs||0).toFixed(1)+"h"}
+                    color={(c.monthHrs||0)>=90?SC.orange:(c.monthHrs||0)>=80?"#ffd740":"#d0dae8"}
+                    tip="Block hours this calendar month.
+Part 135 limit: 100 hours per month."/>
+                  <StatCell label="THIS QTR" value={(c.q1Hrs||0).toFixed(1)+"h"}
+                    color={(c.q1Hrs||0)>=470?SC.red:(c.q1Hrs||0)>=420?SC.orange:"#d0dae8"}
+                    tip="Block hours this calendar quarter (Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec).
+Part 135 limit: 500 hours per quarter."/>
+                  <StatCell label="6 MONTHS" value={(c.halfYrHrs||0).toFixed(1)+"h"}
+                    color={(c.halfYrHrs||0)>=900?SC.red:(c.halfYrHrs||0)>=800?SC.orange:"#d0dae8"}
+                    tip="Block hours over the last two calendar quarters (rolling 6-month).
+Useful for tracking mid-year pacing."/>
+                  {(()=>{
+                    const allPF=pd.flights||[];
+                    const earliest=[...allPF].filter(f=>f._status==='completed').sort((a,b)=>a.date.localeCompare(b.date))[0]?.date||null;
+                    const yr=new Date().getFullYear();
+                    const ok=!earliest||earliest<=`${yr}-01-01`;
+                    return <StatCell label={'ANNUAL'+(ok?'':'⚠')} value={(c.annualHrs||0).toFixed(0)+'h'}
+                    color={(c.annualHrs||0)>=1200?SC.red:(c.annualHrs||0)>=1000?SC.orange:ok?'#d0dae8':'#ffd740'}
+                    tip={earliest?`Earliest data: ${earliest} — annual hrs ${ok?'complete':'⚠ understated, upload full-year export to correct'}`:'No flights loaded'}/>
+                  ;})()}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
+                  
+                  <StatCell label="LAST WORKED" value={c.lastWorkedDate||"—"} color="#8aaabb"
+                  tip="Most recent date with at least one completed flight."/>
+                  <StatCell label="DUTY DAYS" value={c.dutyDaysCount||"—"} color="#8aaabb"
+                  tip="Number of days worked with recorded duty times in the current dataset."/>
+                </div>
+                {/* Duty day stats row */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:10}}>
+                  <StatCell label="PEAK DUTY" value={c.maxDutyMins?fmtMin(c.maxDutyMins):"—"}
+                    color={c.maxDutyMins>=840?SC.red:c.maxDutyMins>=660?SC.orange:"#d0dae8"}
+                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the longest day."/>
+                  <StatCell label="AVG DUTY" value={c.avgDutyMins?fmtMin(c.avgDutyMins):"—"}
+                    color="#8aaabb"
+                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the average across all duty days."/>
+                  <StatCell label="SHORTEST DUTY" value={c.minDutyMins?fmtMin(c.minDutyMins):"—"}
+                    color="#6a9a7a"
+                    tip="Duty times are estimated as 1hr before first scheduled departure to 1hr after last landing, unless a blanket (06:00–20:00) or custom assignment is set.\nPart 135 limit: 14 hours.\nThis shows the shortest day."/>
+                </div>
+
+                {/* ── PILOT STATS ── */}
+                {c.legStats&&(()=>{
+                  const ls=c.legStats;
+                  const StatMini=({label,value,sub,color,tip})=>(
+                    <Tip text={tip||""} width={200}>
+                      <div style={{background:"#0a1018",borderRadius:4,padding:"7px 9px",
+                        border:"1px solid #1a2530",cursor:tip?"help":"default"}}>
+                        <div style={{fontSize:12,color:"#8aaabb",letterSpacing:"0.05em",marginBottom:2,fontWeight:600}}>
+                          {label}{tip&&<span style={{color:"#3a5a6a",marginLeft:2}}>?</span>}
+                        </div>
+                        <div style={{fontSize:21,fontWeight:700,color:color||"#d0dae8",lineHeight:1}}>{value}</div>
+                        {sub&&<div style={{fontSize:12,color:"#5a7a8a",marginTop:2}}>{sub}</div>}
+                      </div>
+                    </Tip>
+                  );
+
+                  const showPilotStats = !!(pilotStatsOpen[pd.username]);
+                  return <div style={{background:"#060a0e",borderRadius:6,marginBottom:8,
+                    border:"1px solid #1a2530",overflow:"visible"}}>
+                    <div onClick={e=>{e.stopPropagation();setPilotStatsOpen(p=>({...p,[pd.username]:!p[pd.username]}));}}
+                      style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                        padding:"8px 10px",cursor:"pointer",
+                        borderBottom:pilotStatsOpen[pd.username]?"1px solid #1a2530":"none",
+                        background:"rgba(74,158,255,0.04)",borderRadius:pilotStatsOpen[pd.username]?"6px 6px 0 0":"6px"}}>
+                      <span style={{fontSize:15,color:"#4a9eff",fontWeight:700,letterSpacing:"0.1em"}}>
+                        📊 PILOT STATS
+                      </span>
+                      <span style={{fontSize:20,color:showPilotStats?"#5aaa8a":"#4a9eff",fontWeight:700,transition:"color 0.15s"}}>{showPilotStats?"▼":"▶"}</span>
+                    </div>
+                    {showPilotStats&&<div style={{padding:"0 10px 10px"}}>
+
+                      {/* Daily flight time */}
+                      <div style={{fontSize:12,color:"#6a8aaa",fontWeight:700,letterSpacing:"0.08em",
+                        marginBottom:5,marginTop:4}}>DAILY FLIGHT TIME</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                        <StatMini label="MAX DAY FLT" value={fmtMin(ls.maxDayFltMins)} color={SC.green}
+                          tip="Highest total block time in a single day."/>
+                        <StatMini label="AVG DAY FLT" value={fmtMin(ls.avgDayFltMins)} color="#8aaabb"
+                          tip="Average total block time per working day."/>
+                        <StatMini label="MIN DAY FLT" value={fmtMin(ls.minDayFltMins)} color="#6a9a7a"
+                          tip="Lowest total block time on a day that had at least one flight."/>
+                      </div>
+
+                      {/* Daily leg counts */}
+                      <div style={{fontSize:12,color:"#6a8aaa",fontWeight:700,letterSpacing:"0.08em",
+                        marginBottom:5}}>DAILY LEG COUNT</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                        <StatMini label="MOST LEGS" value={ls.maxDayLegs} color={SC.green}
+                          tip="Most legs flown in a single day."/>
+                        <StatMini label="AVG LEGS/DAY" value={ls.avgDayLegs.toFixed(1)} color="#8aaabb"
+                          tip="Average legs per working day."/>
+                        <StatMini label="FEWEST LEGS" value={ls.minDayLegs} color="#6a9a7a"
+                          tip="Fewest legs on a day with at least one flight."/>
+                      </div>
+
+                      {/* Individual leg times */}
+                      <div style={{fontSize:12,color:"#6a8aaa",fontWeight:700,letterSpacing:"0.08em",
+                        marginBottom:5}}>INDIVIDUAL LEG</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4}}>
+                        <StatMini label="LONGEST LEG" value={fmtMin(ls.maxLegMins)} color={SC.green}
+                          tip={ls.maxLegFlight?`${ls.maxLegFlight.origin}→${ls.maxLegFlight.destination} on ${ls.maxLegFlight.date}\n${fmtMin(ls.maxLegMins)} block · ${ls.maxLegFlight.tailNumber||"—"}`:"Longest single leg block time."}/>
+                        <StatMini label="AVG LEG" value={fmtMin(ls.avgLegMins)} color="#8aaabb"
+                          tip="Average block time per leg across all completed flights."/>
+                        <StatMini label="SHORTEST LEG" value={fmtMin(ls.minLegMins)} color="#6a9a7a"
+                          tip={ls.minLegFlight?`${ls.minLegFlight.origin}→${ls.minLegFlight.destination} on ${ls.minLegFlight.date}\n${fmtMin(ls.minLegMins)} block · ${ls.minLegFlight.tailNumber||"—"}`:"Shortest single leg block time."}/>
+                      </div>
+
+                    </div>}
+                  </div>;
+                })()}
+
+                {/* ── QUALIFICATION WARNINGS ── */}
+                {qualWarnings.length>0&&<div style={{background:"rgba(255,71,87,0.07)",
+                  borderRadius:6,padding:"8px 10px",marginBottom:8,
+                  border:"1px solid rgba(255,71,87,0.25)"}}>
+                  <div style={{fontSize:14,fontWeight:700,color:SC.red,letterSpacing:"0.08em",marginBottom:5}}>
+                    ⚠ QUALIFICATION WARNINGS
+                  </div>
+                  {qualWarnings.map((w,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:6,
+                      fontSize:15,padding:"2px 0",
+                      borderBottom:i<qualWarnings.length-1?"1px solid rgba(255,71,87,0.1)":"none"}}>
+                      <span style={{fontSize:12,padding:"1px 4px",borderRadius:2,fontWeight:700,
+                        background:`${w.color}22`,color:w.color,border:`1px solid ${w.color}44`}}>
+                        {w.type==='aircraft'?'AIRCRAFT':w.type==='location'?'LOCATION':'IFR'}
+                      </span>
+                      <span style={{color:w.type==='ifr'?"#c0b060":"#c06060"}}>{w.msg}</span>
+                    </div>
+                  ))}
+                </div>}
 
                 {/* Rolling breakdown — collapsible */}
                 <div style={{background:"#060a0e",borderRadius:6,marginBottom:8,border:"1px solid #1a2530",overflow:"hidden"}}>
