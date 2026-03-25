@@ -3014,13 +3014,14 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const enrSchedLive = c.todayFlights
                     .filter(f=>f._status==='scheduled'&&f.schedOff&&f.schedOff<=akNowHHMMEnr&&f._schedDurMins>0)
                     .reduce((s,f)=>{const sBMs=new Date(todayStr2+'T'+f.schedOff+':00').getTime();return s+Math.min(Math.max(0,(now-sBMs)/60000),(f._schedDurMins||60)+30);},0);
-                  const enrMins=enrActual+enrSchedLive;
+                  // Only add enrSchedLive to the live total when there are actual
+                  // en-route flights. Otherwise it grows every clock tick (elapsed time
+                  // since schedOff), causing the total to keep counting after landing.
+                  // enrSchedLive still feeds schedEstMins for the pre-upload display path.
+                  const enrMins = enrActual>0 ? enrActual+enrSchedLive : 0;
                   const enrTotalSecs=Math.floor(enrMins*60);
                   const enrMinsRounded=Math.floor(enrTotalSecs/60);
                   const isLiveEstimate=enrSchedLive>0&&enrActual===0;
-                  // Only tick live when there are ACTUAL en-route flights.
-                  // enrSchedLive is a static fallback estimate — it should never
-                  // drive the live clock (which would keep counting after landing).
                   const isEnrLive=enrActual>0;
                   const todayCompletedMins=todayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
                   const todayFlyingMins=todayCompletedMins+enrMinsRounded;
