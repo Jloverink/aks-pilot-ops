@@ -2504,7 +2504,7 @@ function getPilotCrewWarnings(fullName, crewData) {
   return { pilot, worstStatus, expired, expiring, warning, watch, all: combined };
 }
 
-function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, qualsData, winterMode }) {
+function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, qualsData, winterMode, onQuickImport }) {
   const clockMs = useClock(1000); // live 1-second clock for countdowns and NOW line
   const [selected,   setSelected ] = useState(null);
   const [sortBy,     setSortBy   ] = useState("status");
@@ -2618,10 +2618,55 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
 
   const selPilot = selected ? withCompliance.find(p=>p.username===selected) : null;
 
+  // Quick-import: local state for drag feedback
+  const [quickDrag, setQuickDrag] = React.useState(false);
+  const quickFileRef = React.useRef(null);
+  const [quickImporting, setQuickImporting] = React.useState(false);
+  const doQuickImport = async(file)=>{
+    if(!file||!onQuickImport) return;
+    setQuickImporting(true);
+    await onQuickImport(file);
+    setQuickImporting(false);
+  };
+
+  // Format lastUpdated as relative time
+  const lastUpdatedRel = (()=>{
+    if(!Object.values(fleetData)[0]?.lastUpdated) return null;
+    const ms = Date.now() - new Date(Object.values(fleetData)[0].lastUpdated).getTime();
+    const mins = Math.floor(ms/60000);
+    if(mins<1)  return "just now";
+    if(mins<60) return `${mins}m ago`;
+    const hrs = Math.floor(mins/60);
+    if(hrs<24)  return `${hrs}h ago`;
+    return `${Math.floor(hrs/24)}d ago`;
+  })();
+
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-      <div style={{fontSize:20,fontWeight:700,letterSpacing:"0.1em",color:"#e0e8f0"}}>FLEET COMPLIANCE</div>
-      <div style={{fontSize:14,color:"#7a9ab8"}}>{lastUpdated}</div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:8}}>
+      <div>
+        <div style={{fontSize:20,fontWeight:700,letterSpacing:"0.1em",color:"#e0e8f0"}}>FLEET COMPLIANCE</div>
+        {lastUpdatedRel&&<div style={{fontSize:12,color:"#5a7a8a",marginTop:2}}>
+          📂 Last import: <span style={{color:"#7a9ab8"}}>{lastUpdatedRel}</span>
+          <span style={{color:"#3a5060",marginLeft:6}}>{lastUpdated}</span>
+        </div>}
+      </div>
+      {/* Quick-import button */}
+      <div
+        onDragOver={e=>{e.preventDefault();setQuickDrag(true);}}
+        onDragLeave={()=>setQuickDrag(false)}
+        onDrop={e=>{e.preventDefault();setQuickDrag(false);const f=e.dataTransfer.files[0];if(f)doQuickImport(f);}}
+        onClick={()=>quickFileRef.current?.click()}
+        style={{display:"flex",alignItems:"center",gap:8,padding:"7px 14px",borderRadius:5,cursor:"pointer",
+          border:`1px solid ${quickDrag?"#4a9eff":"rgba(74,158,255,0.35)"}`,
+          background:quickDrag?"rgba(74,158,255,0.15)":quickImporting?"rgba(74,158,255,0.08)":"rgba(74,158,255,0.05)",
+          transition:"all 0.15s"}}>
+        <input ref={quickFileRef} type="file" accept=".xlsx" style={{display:"none"}}
+          onChange={e=>{const f=e.target.files?.[0];if(f){doQuickImport(f);e.target.value="";}}}/>
+        <span style={{fontSize:16}}>{quickImporting?"⏳":"📂"}</span>
+        <span style={{fontSize:13,fontWeight:700,color:"#4a9eff",fontFamily:"'JetBrains Mono',monospace"}}>
+          {quickImporting?"IMPORTING…":"UPLOAD FLIGHT LOG"}
+        </span>
+      </div>
     </div>
 
     {/* Company filter */}
@@ -7979,6 +8024,31 @@ function App() {
     await sset(SK.quals, parsed);
   },[]);
 
+  // Quick-import: parse an xlsx dropped on the FLT/DUTY screen header
+  const quickImportRef = useRef(null);
+  const handleQuickImport = useCallback(async(file)=>{
+    if(!file) return;
+    try {
+      const XLSX = await loadXlsx();
+      const buf  = await file.arrayBuffer();
+      const wb   = XLSX.read(new Uint8Array(buf),{type:'array',cellDates:false});
+      const pilotFlights = parseFlightLogExport(wb, XLSX.utils);
+      const usernames    = Object.keys(pilotFlights).sort();
+      const routeAvgs    = computeRouteAverages(pilotFlights);
+      const pilotMap     = {};
+      usernames.forEach(u=>{
+        const raw = pilotFlights[u];
+        pilotMap[u] = {
+          username:u, fullName:PILOT_NAME_MAP[u]||u,
+          office:pilotCompany(u),
+          flights:raw,
+          lastUpdated:new Date().toISOString()
+        };
+      });
+      await importFleet(pilotMap, routeAvgs);
+    } catch(e) { console.error('Quick import failed:', e); }
+  },[importFleet]);
+
   const importFleet=useCallback(async(pilotMap, newRouteAvgs)=>{
     const newFleet = {...fleetData, ...pilotMap};
     setFleetData(newFleet);
@@ -8088,7 +8158,7 @@ function App() {
   const renderScreen=(s=screen)=>{
     if(s==="new")     return <FlightForm initial={editFlight} profile={profile} onSave={saveFlight} onCancel={()=>{setEditFlight(null);setScreen("home");}}/>;
     if(s==="history") return <HistoryScreen flights={flights} duties={duties} onEdit={(f)=>{setEditFlight(f);setScreen("new");}} onDelete={deleteFlight}/>;
-    if(s==="fleet")   return <FleetScreen fleetData={fleetData} onUpdateDuty={updateDuty} crewData={crewData} routeAvgs={routeAvgs} wx={wx} wxAge={wxAge} qualsData={qualsData} winterMode={winterMode}/>;
+    if(s==="fleet")   return <FleetScreen fleetData={fleetData} onUpdateDuty={updateDuty} crewData={crewData} routeAvgs={routeAvgs} wx={wx} wxAge={wxAge} qualsData={qualsData} winterMode={winterMode} onQuickImport={handleQuickImport}/>;
     if(s==="payload") return <PayloadScreen/>;
     if(s==="fuel")    return <FuelScreen/>;
     if(s==="scan")    return <ScanScreen onFlightsScanned={handleScanned}/>;
