@@ -272,7 +272,7 @@ const WARN_THRESHOLDS = [300, 360, 390];
 const SC = { green:"#00e676", yellow:"#ffd740", orange:"#ff6d00", red:"#ff1744" };
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
-const fmtMin = (m) => { if(!m&&m!==0)return"—"; const h=Math.floor(Math.abs(m)/60),mn=Math.abs(m)%60; return`${h}:${String(mn).padStart(2,"0")}`; };
+const fmtMin = (m) => { if(!m&&m!==0)return"—"; const tot=Math.floor(Math.abs(m)); const h=Math.floor(tot/60),mn=tot%60; return`${h}:${String(mn).padStart(2,"0")}`; };
 const fmtHrs = (m) => (!m&&m!==0)?"0.0":(m/60).toFixed(1);
 const parseTime = (s) => { if(!s)return null; const[h,mm]=s.split(":").map(Number); return isNaN(h)||isNaN(mm)?null:h*60+mm; };
 // Signed diff: actual - scheduled. Negative = early, positive = late.
@@ -3028,13 +3028,15 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     // Are we currently mid-erasure on this flight?
                     if(windowStartMs >= offMs && windowStartMs < onMs) windowInsideYestBlock = true;
                   }
+                  yesterdayMins = Math.floor(yesterdayMins); // floor to whole minutes — fractions cause float bleed in fmtMin
                   // Show seconds on YEST LEFT when windowStart is inside a yesterday block
-                  const yesterdayTotalSecs = Math.floor(yesterdayMins * 60);
-                  const yestH = Math.floor(yesterdayTotalSecs/3600);
-                  const yestM = Math.floor((yesterdayTotalSecs%3600)/60);
-                  const yestS = yesterdayTotalSecs%60;
+                  // Use wallSec for seconds — yesterdayMins is whole-minute floored,
+                  // so deriving seconds from it always gives 0. Both TODAY and YEST LEFT
+                  // tick at 1s/s so they share the same wallSec.
+                  const yestH = Math.floor(yesterdayMins/60);
+                  const yestM = yesterdayMins%60;
                   const yesterdayDisplay = windowInsideYestBlock
-                    ? `${yestH>0?yestH+':':''}${String(yestM).padStart(yestH>0?2:1,'0')}:${String(yestS).padStart(2,'0')}`
+                    ? `${yestH>0?yestH+':':''}${String(yestM).padStart(yestH>0?2:1,'0')}:${String(wallSec).padStart(2,'0')}`
                     : fmtMin(yesterdayMins);
 
                   // Today completed flights in window
@@ -3078,7 +3080,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   }
 
                   // TODAY = completed mins + live elapsed on active flight (capped at block end)
-                  const todayFlyingMins = todayCompMins + Math.floor(activeElapsedMins);
+                  const todayFlyingMins = Math.floor(todayCompMins + activeElapsedMins);
 
                   // ── Is NOW inside a yesterday-window erasure period? ───────────
                   // Erasing = the windowStartMs is currently sweeping through yesterday flights
@@ -3087,7 +3089,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const isErasing = windowInsideYestBlock;
 
                   // ── ERASES IN countdown ────────────────────────────────────────
-                  let msLeft=null,hLeft=0,mLeft=0,sLeft=0,eraseLabel="ERASES IN";
+                  let msLeft=null,hLeft=0,mLeft=0,sLeft=0,eraseLabel="ERASES IN",eraseAtTime=null,eraseFlightRoute=null;
                   if(yesterdayFlightsAll.length){
                     const sortedYest=[...yesterdayFlightsAll].sort((a,b)=>
                       new Date(a.date+'T'+a.startTaxi+':00').getTime()-new Date(b.date+'T'+b.startTaxi+':00').getTime()
@@ -3100,6 +3102,10 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                       const ts = Math.floor(msLeft/1000);
                       hLeft=Math.floor(ts/3600); mLeft=Math.floor((ts%3600)/60); sLeft=(60-wallSec)%60;
                       eraseLabel = anyAgedOut ? "NEXT CLEARS" : "ERASES IN";
+                      // Clock time when this flight ages out (= block start + 24h)
+                      const agesOutDate = new Date(agesOutMs);
+                      eraseAtTime = String(agesOutDate.getHours()).padStart(2,'0')+':'+String(agesOutDate.getMinutes()).padStart(2,'0');
+                      eraseFlightRoute = `${nextToAge.origin||'?'}→${nextToAge.destination||'?'}`;
                     }
                   }
 
@@ -3140,65 +3146,72 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     <div style={{display:"grid",gridTemplateColumns:"1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr",gap:0,alignItems:"center",marginBottom:5}}>
 
                       {/* TODAY */}
-                      <div style={{textAlign:"center"}}>
+                      <Tip text={"Today's block time — completed flights plus live elapsed on any active flight.\nOnly counts while NOW is inside a scheduled or actual flight block.\nFreezes between blocks."} width={220}>
+                      <div style={{textAlign:"center",cursor:"help"}}>
                         <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>TODAY</div>
                         <div style={{fontSize:20,fontWeight:700,color:"#4a9eff",fontFamily:"monospace"}}>
                           {todayDisplay}{isAccruing&&<span style={{fontSize:12,color:"#ffd740"}}>▶</span>}
                         </div>
-                      </div>
+                      </div></Tip>
                       <div style={{color:"#2a3a4a",fontSize:24,fontWeight:300,textAlign:"center",padding:"0 3px"}}>+</div>
 
                       {/* YEST LEFT */}
-                      <div style={{textAlign:"center"}}>
+                      <Tip text={"Yesterday's block time still inside the rolling 24-hour window.\nCounts down in real time as the window sweeps through yesterday's flights.\nOnly ticks while the 24h boundary is inside a confirmed flight block — flat between blocks."} width={240}>
+                      <div style={{textAlign:"center",cursor:"help"}}>
                         <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>YEST LEFT</div>
                         <div style={{fontSize:20,fontWeight:700,color:yesterdayMins>0?"#ff9944":"#2a3a4a",fontFamily:"monospace"}}>
                           {yesterdayMins>0?yesterdayDisplay:"—"}
                           {windowInsideYestBlock&&yesterdayMins>0&&<span style={{fontSize:12,color:"#ff9944"}}>▼</span>}
                         </div>
-                      </div>
+                      </div></Tip>
                       <div style={{color:"#2a3a4a",fontSize:24,fontWeight:300,textAlign:"center",padding:"0 3px"}}>=</div>
 
                       {/* 8-IN-24 */}
-                      <div style={{textAlign:"center"}}>
+                      <Tip text={"FAR 135.265 rolling limit: no more than 8 hours of block time in any 24-hour period.\nThis number = TODAY + YEST LEFT — your live total right now.\nHits 8:00 = no-fly until the oldest flight rolls off the window."} width={260}>
+                      <div style={{textAlign:"center",cursor:"help"}}>
                         <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>8-IN-24</div>
                         <div style={{fontSize:20,fontWeight:700,color:liveCol,fontFamily:"monospace"}}>
                           {(()=>{
-                              const totalSecs = Math.floor(todayFlyingMins*60) + yesterdayTotalSecs;
-                              const tH=Math.floor(totalSecs/3600),tM=Math.floor((totalSecs%3600)/60),tS=totalSecs%60;
+                              const totalMins = todayFlyingMins + yesterdayMins;
+                              const tH=Math.floor(totalMins/60),tM=totalMins%60;
                               return (showSecs||windowInsideYestBlock)
-                                ? `${tH>0?tH+':':''}${String(tM).padStart(tH>0?2:1,'0')}:${String(tS).padStart(2,'0')}`
+                                ? `${tH>0?tH+':':''}${String(tM).padStart(tH>0?2:1,'0')}:${String(wallSec).padStart(2,'0')}`
                                 : fmtMin(totalLive)||"—";
                             })()}
                           {(isAccruing||windowInsideYestBlock)&&<span style={{fontSize:12,color:isAccruing?"#ffd740":"#ff9944"}}>{isAccruing?"▶":"▼"}</span>}
                         </div>
-                      </div>
+                      </div></Tip>
                       <div style={{color:"#2a3a4a",fontSize:24,fontWeight:300,textAlign:"center",padding:"0 3px"}}>+</div>
 
                       {/* SCHED LEFT — remaining future legs */}
-                      <div style={{textAlign:"center"}}>
+                      <Tip text={"Scheduled block time for flights that haven't departed yet today.\nAdded to 8-IN-24 to show where you'll land if the rest of the day goes as planned."} width={230}>
+                      <div style={{textAlign:"center",cursor:"help"}}>
                         <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>SCHED LEFT</div>
                         <div style={{fontSize:20,fontWeight:700,color:projCol,fontFamily:"monospace"}}>{schedRemaining>0?fmtMin(schedRemaining):"—"}</div>
-                      </div>
+                      </div></Tip>
                       <div style={{color:"#2a3a4a",fontSize:21,fontWeight:300,textAlign:"center",padding:"0 3px"}}>→</div>
 
                       {/* REMAINING */}
-                      <div style={{textAlign:"center"}}>
+                      <Tip text={"How much block time is left before hitting the 8-hour FAR 135.265 limit.\n8:00 minus (8-IN-24 + SCHED LEFT).\nThis is your worst-case remaining capacity if all scheduled legs fly as planned."} width={250}>
+                      <div style={{textAlign:"center",cursor:"help"}}>
                         <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>REMAINING</div>
                         <div style={{fontSize:20,fontWeight:700,color:projCol,fontFamily:"monospace"}}>{fmtMin(Math.max(0,480-liveProjected))}</div>
-                      </div>
+                      </div></Tip>
                       <div style={{color:"#2a3a4a",fontSize:18,fontWeight:300,textAlign:"center",padding:"0 3px"}}>⏳</div>
 
                       {/* STATUS */}
-                      <div style={{textAlign:"center"}}>
+                      <Tip text={"↑ ACCRUING — NOW is inside an active flight block. TODAY is counting up.\n↓ ERASING — The 24h window is sweeping through a yesterday block. YEST LEFT counting down.\n≈ STEADY — Both happening simultaneously. Net change near zero.\nNEUTRAL — Between all blocks. No change to 8-IN-24."} width={270}>
+                      <div style={{textAlign:"center",cursor:"help"}}>
                         <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>STATUS</div>
                         <div style={{fontSize:14,fontWeight:700,color:statusCol,fontFamily:"monospace",letterSpacing:"0.04em"}}>{statusVal}</div>
-                      </div>
+                      </div></Tip>
                       <div style={{color:"#2a3a4a",fontSize:14,fontWeight:300,textAlign:"center",padding:"0 3px"}}></div>
 
                       {/* ERASES IN / NEXT CLEARS */}
                       <div style={{textAlign:"center"}}>
                         <div style={{fontSize:12,color:msLeft&&eraseLabel==="NEXT CLEARS"?"#ff9944":"#7a9ab8",marginBottom:1}}>{eraseLabel}</div>
                         <div style={{fontSize:msLeft&&hLeft===0?20:17,fontWeight:700,color:eraseLabel==="NEXT CLEARS"?"#ff9944":"#ffd740",fontFamily:"monospace"}}>{erasesDisplay}</div>
+                        {eraseAtTime&&<div style={{fontSize:11,color:"#5a7a8a",fontFamily:"monospace",marginTop:1}}>@ {eraseAtTime}{eraseFlightRoute?` · ${eraseFlightRoute}`:""}</div>}
                       </div>
 
                     </div>
