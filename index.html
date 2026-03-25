@@ -1430,6 +1430,7 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew }) 
         grossWeight:'', index:'',
         notes: flightNo,
         delayCode: String(r[col('Delay Code')]||'').trim() || '',
+        fuelUplift: parseFloat(r[col('Fuel Uplift')])||0,
         dutyType: ftype.toLowerCase().includes('charter')?'onDemand':'scheduled',
         flightRules: vfr, landings:ldgs, nightLandings:0,
         trainingType: ftype.toLowerCase().includes('train')?'Training':'',
@@ -1899,10 +1900,16 @@ const addMinToHHMM = addMinToTime;
 
 function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   if(!flights||!flights.length) return {
-    rolling:0, rollingProjected:0, status:"green", statusProjected:"green",
-    enrouteLegs:0, todayLegs:0, todayMins:0, todayFlights:[],
-    tomorrowFlights:[], maxDutyMins:0, minDutyMins:0, avgDutyMins:0, dutyDaysCount:0, maxFltMins:0, q1Hrs:0, legStats:null,
-    dutyDays:{}, projectedDutyDays:{}
+    rolling:0, rollingProjected:0, status:"green", statusProjected:"green", statusNextDay:"green",
+    enrouteLegs:0, schedLegs:0, todayLegs:0, todayMins:0, todaySchedMins:0,
+    todayFlights:[], tomorrowFlights:[], yesterdayFlights:[], lastWorkedFlights:[], lastWorkedDate:null,
+    maxDutyMins:0, minDutyMins:0, avgDutyMins:0, dutyDaysCount:0, maxFltMins:0,
+    q1Hrs:0, monthHrs:0, halfYrHrs:0, annualHrs:0,
+    consecutiveDays:0, legStats:null,
+    dutyDays:{}, projectedDutyDays:{},
+    windowStartMs:Date.now()-86400000, projWindowEndMs:Date.now(),
+    inWindowFlights:[], enrouteFlights:[], schedInWindow:[], nextDayFlights:[],
+    nextDayProjected:0, noGoMs:null, clearsAtMs:null,
   };
 
   const todayStr    = today();
@@ -3003,14 +3010,22 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const akNowForEnr = new Date(now);
                   const akNowHHMMEnr = String(akNowForEnr.getHours()).padStart(2,'0')+':'+String(akNowForEnr.getMinutes()).padStart(2,'0');
                   const todayStr2 = todayStr;
-                  const enrActual = (c.enrouteFlights||[]).reduce((s,f)=>{
+                  // Track both raw elapsed and the cap per en-route flight so we
+                  // know whether ANY flight is still actively accruing (below its ETA cap).
+                  let enrActual=0, anyEnrBelowCap=false;
+                  for(const f of (c.enrouteFlights||[])){
                     const offTime=f.startTaxi||f.schedOff;
-                    if(offTime&&f.date){const bMs=new Date(f.date+'T'+offTime+':00').getTime();const el=Math.max(0,(now-bMs)/60000);return s+Math.min(el,(f._schedDurMins||f.totalMinutes||120)+60);}
-                    return s+(f.totalMinutes||0);
-                  },0);
+                    if(offTime&&f.date){
+                      const bMs=new Date(f.date+'T'+offTime+':00').getTime();
+                      const el=Math.max(0,(now-bMs)/60000);
+                      const cap=f.totalMinutes||f._schedDurMins||120;
+                      enrActual+=Math.min(el,cap);
+                      if(el<cap) anyEnrBelowCap=true;
+                    } else { enrActual+=(f.totalMinutes||0); }
+                  }
                   const enrSchedLive = c.todayFlights
                     .filter(f=>f._status==='scheduled'&&f.schedOff&&f.schedOff<=akNowHHMMEnr&&f._schedDurMins>0)
-                    .reduce((s,f)=>{const sBMs=new Date(todayStr2+'T'+f.schedOff+':00').getTime();return s+Math.min(Math.max(0,(now-sBMs)/60000),(f._schedDurMins||60)+30);},0);
+                    .reduce((s,f)=>{const sBMs=new Date(todayStr2+'T'+f.schedOff+':00').getTime();return s+Math.min(Math.max(0,(now-sBMs)/60000),(f._schedDurMins||60));},0);
                   // Only add enrSchedLive to the live total when there are actual
                   // en-route flights. Otherwise it grows every clock tick (elapsed time
                   // since schedOff), causing the total to keep counting after landing.
@@ -3019,7 +3034,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const enrTotalSecs=Math.floor(enrMins*60);
                   const enrMinsRounded=Math.floor(enrTotalSecs/60);
                   const isLiveEstimate=enrSchedLive>0&&enrActual===0;
-                  const isEnrLive=enrActual>0;
+                  const isEnrLive=anyEnrBelowCap; // only tick while below ETA cap
                   const todayCompletedMins=todayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
                   const todayFlyingMins=todayCompletedMins+enrMinsRounded;
                   const yesterdayMins=yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
@@ -3162,8 +3177,8 @@ Part 135 limit: 500 hours per quarter."/>
                     tip="Block hours over the last two calendar quarters (rolling 6-month).
 Useful for tracking mid-year pacing."/>
                   {(()=>{
-                    const allPF=flights.filter(f=>(f._pilot||f.pilot||')===(pd?.username||')); 
-                    const earliest=[...allPF].sort((a,b)=>a.date.localeCompare(b.date))[0]?.date||null;
+                    const allPF=pd.flights||[];
+                    const earliest=[...allPF].filter(f=>f._status==='completed').sort((a,b)=>a.date.localeCompare(b.date))[0]?.date||null;
                     const yr=new Date().getFullYear();
                     const ok=!earliest||earliest<=`${yr}-01-01`;
                     return <StatCell label={'ANNUAL'+(ok?'':'⚠')} value={(c.annualHrs||0).toFixed(0)+'h'}
@@ -3172,15 +3187,7 @@ Useful for tracking mid-year pacing."/>
                   ;})()}
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
-                  {(()=>{
-                  const allPF=flights.filter(f=>(f._pilot||f.pilot||'')===(pd?.username||''));
-                  const earliest=[...allPF].sort((a,b)=>a.date.localeCompare(b.date))[0]?.date||null;
-                  const yr=new Date().getFullYear();
-                  const ok=!earliest||earliest<=`${yr}-01-01`;
-                  return <StatCell label={"ANNUAL"+(ok?"":"\u26a0")} value={(c.annualHrs||0).toFixed(0)+"h"}
-                  color={(c.annualHrs||0)>=1200?SC.red:(c.annualHrs||0)>=1000?SC.orange:ok?"#d0dae8":"#ffd740"}
-                  tip={earliest?`Earliest data: ${earliest} \u2014 annual hrs ${ok?"complete":"\u26a0 understated, upload full-year export to correct"}`:"No flights loaded"}/>;
-                })()}
+                  
                   <StatCell label="LAST WORKED" value={c.lastWorkedDate||"—"} color="#8aaabb"
                   tip="Most recent date with at least one completed flight."/>
                   <StatCell label="DUTY DAYS" value={c.dutyDaysCount||"—"} color="#8aaabb"
@@ -3826,7 +3833,7 @@ End: ${endReason}`;
                                 <span style={{color:"#7a9ab0",marginLeft:6}}>{fmtMin(f.totalMinutes)}</span>
                               </div>
                               {f.tailNumber&&<div style={{color:"#7a9ab0"}}>
-                                {f.tailNumber}{f.pax&&parseInt(f.pax)>0?` · ${f.pax} pax`:""}
+                                {f.tailNumber}{f.pax&&parseInt(f.pax)>0?` · ${f.pax} pax`:""}{f.fuelUplift>0?` · ${f.fuelUplift} gal`:""}
                               </div>}
                               {(()=>{const w=flightWx(f);return w?<div style={{marginTop:2,display:"flex",gap:4,alignItems:"center"}}>
                                 <WxBadge cat={w.cat} size={8}/>
