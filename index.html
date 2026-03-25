@@ -1430,6 +1430,7 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew }) 
         grossWeight:'', index:'',
         notes: flightNo,
         delayCode: String(r[col('Delay Code')]||'').trim() || '',
+        fuelUplift: parseFloat(r[col('Fuel Uplift')])||0,
         dutyType: ftype.toLowerCase().includes('charter')?'onDemand':'scheduled',
         flightRules: vfr, landings:ldgs, nightLandings:0,
         trainingType: ftype.toLowerCase().includes('train')?'Training':'',
@@ -3005,7 +3006,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const todayStr2 = todayStr;
                   const enrActual = (c.enrouteFlights||[]).reduce((s,f)=>{
                     const offTime=f.startTaxi||f.schedOff;
-                    if(offTime&&f.date){const bMs=new Date(f.date+'T'+offTime+':00').getTime();const el=Math.max(0,(now-bMs)/60000);return s+Math.min(el,(f._schedDurMins||f.totalMinutes||120)+60);}
+                    if(offTime&&f.date){const bMs=new Date(f.date+'T'+offTime+':00').getTime();const el=Math.max(0,(now-bMs)/60000);return s+Math.min(el,(f.totalMinutes||f._schedDurMins||120));}
                     return s+(f.totalMinutes||0);
                   },0);
                   const enrSchedLive = c.todayFlights
@@ -3162,7 +3163,7 @@ Part 135 limit: 500 hours per quarter."/>
                     tip="Block hours over the last two calendar quarters (rolling 6-month).
 Useful for tracking mid-year pacing."/>
                   {(()=>{
-                    const allPF=flights.filter(f=>(f._pilot||f.pilot||')===(pd?.username||')); 
+                    const allPF=flights.filter(f=>(f._pilot||f.pilot||'')===(pd?.username||'')); 
                     const earliest=[...allPF].sort((a,b)=>a.date.localeCompare(b.date))[0]?.date||null;
                     const yr=new Date().getFullYear();
                     const ok=!earliest||earliest<=`${yr}-01-01`;
@@ -3172,15 +3173,7 @@ Useful for tracking mid-year pacing."/>
                   ;})()}
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:4}}>
-                  {(()=>{
-                  const allPF=flights.filter(f=>(f._pilot||f.pilot||'')===(pd?.username||''));
-                  const earliest=[...allPF].sort((a,b)=>a.date.localeCompare(b.date))[0]?.date||null;
-                  const yr=new Date().getFullYear();
-                  const ok=!earliest||earliest<=`${yr}-01-01`;
-                  return <StatCell label={"ANNUAL"+(ok?"":"\u26a0")} value={(c.annualHrs||0).toFixed(0)+"h"}
-                  color={(c.annualHrs||0)>=1200?SC.red:(c.annualHrs||0)>=1000?SC.orange:ok?"#d0dae8":"#ffd740"}
-                  tip={earliest?`Earliest data: ${earliest} \u2014 annual hrs ${ok?"complete":"\u26a0 understated, upload full-year export to correct"}`:"No flights loaded"}/>;
-                })()}
+                  
                   <StatCell label="LAST WORKED" value={c.lastWorkedDate||"—"} color="#8aaabb"
                   tip="Most recent date with at least one completed flight."/>
                   <StatCell label="DUTY DAYS" value={c.dutyDaysCount||"—"} color="#8aaabb"
@@ -3826,7 +3819,7 @@ End: ${endReason}`;
                                 <span style={{color:"#7a9ab0",marginLeft:6}}>{fmtMin(f.totalMinutes)}</span>
                               </div>
                               {f.tailNumber&&<div style={{color:"#7a9ab0"}}>
-                                {f.tailNumber}{f.pax&&parseInt(f.pax)>0?` · ${f.pax} pax`:""}
+                                {f.tailNumber}{f.pax&&parseInt(f.pax)>0?` · ${f.pax} pax`:""}{f.fuelUplift>0?` · ${f.fuelUplift} gal`:""}
                               </div>}
                               {(()=>{const w=flightWx(f);return w?<div style={{marginTop:2,display:"flex",gap:4,alignItems:"center"}}>
                                 <WxBadge cat={w.cat} size={8}/>
