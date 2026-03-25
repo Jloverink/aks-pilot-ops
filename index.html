@@ -2549,8 +2549,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
   const todayStr     = today();
   const tomorrowStr  = (()=>{ const d=new Date(todayStr); d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); })();
   const yesterdayStr = (()=>{ const d=new Date(todayStr); d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); })();
-  const lastUpdated = Object.values(fleetData)[0]?.lastUpdated
-    ? new Date(Object.values(fleetData)[0].lastUpdated).toLocaleString() : "unknown";
+
 
   // All unique companies in the dataset
   const companies = [...new Set(Object.values(fleetData).map(pd=>pd.office||'Unknown'))].sort();
@@ -2626,62 +2625,84 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
     if(!file||!onQuickImport) return;
     setQuickImporting(true);
     await onQuickImport(file);
+    setLastImportTs(new Date().toISOString());
     setQuickImporting(false);
   };
 
-  // Format lastUpdated as relative time
-  const lastUpdatedRel = (()=>{
-    if(!Object.values(fleetData)[0]?.lastUpdated) return null;
-    const ms = Date.now() - new Date(Object.values(fleetData)[0].lastUpdated).getTime();
+  // Track last import time locally so it updates immediately after quick-import
+  const [lastImportTs, setLastImportTs] = React.useState(
+    Object.values(fleetData)[0]?.lastUpdated || null
+  );
+  // Sync when fleetData changes (e.g. after import)
+  React.useEffect(()=>{
+    const ts = Object.values(fleetData)[0]?.lastUpdated;
+    if(ts) setLastImportTs(ts);
+  }, [fleetData]);
+
+  const fmtRelTime = ts => {
+    if(!ts) return null;
+    const ms = Date.now() - new Date(ts).getTime();
     const mins = Math.floor(ms/60000);
     if(mins<1)  return "just now";
     if(mins<60) return `${mins}m ago`;
     const hrs = Math.floor(mins/60);
     if(hrs<24)  return `${hrs}h ago`;
     return `${Math.floor(hrs/24)}d ago`;
-  })();
+  };
+  const lastUpdatedRel = fmtRelTime(lastImportTs);
+  const lastUpdated = lastImportTs ? new Date(lastImportTs).toLocaleString() : "unknown";
 
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,gap:8}}>
-      <div style={{fontSize:20,fontWeight:700,letterSpacing:"0.1em",color:"#e0e8f0"}}>FLEET COMPLIANCE</div>
-      {/* Quick-import button stacked with last-import timestamp */}
-      <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3,flexShrink:0}}>
-        <div
-          onDragOver={e=>{e.preventDefault();setQuickDrag(true);}}
-          onDragLeave={()=>setQuickDrag(false)}
-          onDrop={e=>{e.preventDefault();setQuickDrag(false);const f=e.dataTransfer.files[0];if(f)doQuickImport(f);}}
-          onClick={()=>quickFileRef.current?.click()}
-          style={{display:"flex",alignItems:"center",gap:7,padding:"6px 12px",borderRadius:5,cursor:"pointer",
-            border:`1px solid ${quickDrag?"#4a9eff":"rgba(74,158,255,0.35)"}`,
-            background:quickDrag?"rgba(74,158,255,0.15)":quickImporting?"rgba(74,158,255,0.08)":"rgba(74,158,255,0.05)",
-            transition:"all 0.15s"}}>
-          <input ref={quickFileRef} type="file" accept=".xlsx" style={{display:"none"}}
-            onChange={e=>{const f=e.target.files?.[0];if(f){doQuickImport(f);e.target.value="";}}}/>
-          <span style={{fontSize:15}}>{quickImporting?"⏳":"📂"}</span>
-          <span style={{fontSize:13,fontWeight:700,color:"#4a9eff",fontFamily:"'JetBrains Mono',monospace"}}>
-            {quickImporting?"IMPORTING…":"UPLOAD FLIGHT LOG"}
-          </span>
-        </div>
-        {lastUpdatedRel&&<div style={{fontSize:11,color:"#5a7a8a",textAlign:"right",lineHeight:1.3}}>
-          last import <span style={{color:"#7a9ab8"}}>{lastUpdatedRel}</span>
-          <span style={{color:"#3a5060",display:"block",fontSize:10}}>{lastUpdated}</span>
-        </div>}
+    {/* Compact top bar: sort tabs + search + upload — all one row */}
+    <div style={{display:"flex",gap:5,marginBottom:8,alignItems:"center",flexWrap:"wrap"}}>
+      {/* Sort tabs */}
+      {[["status","STATUS"],["rolling","8-IN-24"],["quarterly","QTR"],["name","NAME"]].map(([k,l])=>(
+        <button key={k} onClick={()=>setSortBy(k)} style={{padding:"5px 8px",borderRadius:4,
+          border:`1px solid ${sortBy===k?"#4a9eff":"#1e2730"}`,
+          background:sortBy===k?"rgba(74,158,255,0.1)":"transparent",
+          color:sortBy===k?"#4a9eff":"#7a9ab8",fontSize:13,fontWeight:700,cursor:"pointer",
+          fontFamily:"'JetBrains Mono',monospace",whiteSpace:"nowrap"}}>
+          {l}
+        </button>
+      ))}
+      {/* Company filter */}
+      {companies.length>1&&['All',...companies].map(co=>(
+        <button key={co} onClick={()=>{setCompanyFilter(co);setSelected(null);}}
+          style={{padding:"5px 8px",borderRadius:4,fontFamily:"'JetBrains Mono',monospace",
+            border:`1px solid ${companyFilter===co?"#4a9eff":"#1e2730"}`,
+            background:companyFilter===co?"rgba(74,158,255,0.12)":"transparent",
+            color:companyFilter===co?"#4a9eff":"#5a7a8a",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+          {co==='All'?`ALL (${Object.keys(fleetData).length})`:co==='Unknown'?`?`:co.split(' ')[0]}
+        </button>
+      ))}
+      {/* Spacer */}
+      <div style={{flex:1,minWidth:4}}/>
+      {/* Search */}
+      <input value={search} onChange={e=>{setSearch(e.target.value);setSelected(null);}}
+        placeholder="🔍 pilot..."
+        style={{width:110,background:"#0a1118",border:"1px solid #1e2730",borderRadius:5,
+          color:"#e8edf2",fontSize:13,padding:"5px 8px",fontFamily:"'JetBrains Mono',monospace",outline:"none"}}/>
+      {/* Upload button */}
+      <div
+        onDragOver={e=>{e.preventDefault();setQuickDrag(true);}}
+        onDragLeave={()=>setQuickDrag(false)}
+        onDrop={e=>{e.preventDefault();setQuickDrag(false);const f=e.dataTransfer.files[0];if(f)doQuickImport(f);}}
+        onClick={()=>quickFileRef.current?.click()}
+        title={lastUpdatedRel?`Last import: ${lastUpdatedRel}\n${lastUpdated}`:"Upload flight log XLSX"}
+        style={{display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:5,cursor:"pointer",
+          border:`1px solid ${quickDrag?"#4a9eff":"rgba(74,158,255,0.35)"}`,
+          background:quickDrag?"rgba(74,158,255,0.15)":quickImporting?"rgba(74,158,255,0.08)":"rgba(74,158,255,0.05)",
+          transition:"all 0.15s",flexShrink:0}}>
+        <input ref={quickFileRef} type="file" accept=".xlsx" style={{display:"none"}}
+          onChange={e=>{const f=e.target.files?.[0];if(f){doQuickImport(f);e.target.value="";}}}/>
+        <span style={{fontSize:14}}>{quickImporting?"⏳":"📂"}</span>
+        <span style={{fontSize:12,fontWeight:700,color:"#4a9eff",fontFamily:"'JetBrains Mono',monospace",whiteSpace:"nowrap"}}>
+          {quickImporting?"…":lastUpdatedRel||"UPLOAD"}
+        </span>
       </div>
     </div>
 
-    {/* Company filter */}
-    <div style={{display:"flex",gap:4,marginBottom:12,flexWrap:"wrap"}}>
-      {['All',...companies].map(co=>(
-        <button key={co} onClick={()=>{setCompanyFilter(co);setSelected(null);}}
-          style={{padding:"5px 10px",borderRadius:4,fontFamily:"'JetBrains Mono',monospace",
-            border:`1px solid ${companyFilter===co?"#4a9eff":"#1e2730"}`,
-            background:companyFilter===co?"rgba(74,158,255,0.12)":"transparent",
-            color:companyFilter===co?"#4a9eff":"#7a9ab8",
-            fontSize:14,fontWeight:700,cursor:"pointer"}}>
-          {co==='All'?`ALL (${Object.keys(fleetData).length})`:co==='Unknown'?`UNASSIGNED`:co}
-        </button>
-      ))}
-    </div>
+
 
     {/* Summary strip */}
     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:12}}>
@@ -2706,24 +2727,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
       <div style={{fontSize:14,color:"#7a9ab8"}}>Upload Pilot Status Board on the CREW tab to see cert &amp; currency warnings here</div>
     </div>}
 
-    {/* Sort + Search row */}
-    <div style={{display:"flex",gap:6,marginBottom:10,alignItems:"center"}}>
-      <div style={{display:"flex",gap:3,flex:1}}>
-        {[["status","STATUS"],["rolling","8-IN-24"],["quarterly","QTR HRS"],["name","NAME"]].map(([k,l])=>(
-          <button key={k} onClick={()=>setSortBy(k)} style={{flex:1,padding:"5px 2px",borderRadius:4,
-            border:`1px solid ${sortBy===k?"#4a9eff":"#1e2730"}`,
-            background:sortBy===k?"rgba(74,158,255,0.1)":"transparent",
-            color:sortBy===k?"#4a9eff":"#7a9ab8",fontSize:14,fontWeight:700,cursor:"pointer",
-            fontFamily:"'JetBrains Mono',monospace"}}>
-            {l}
-          </button>
-        ))}
-      </div>
-      <input value={search} onChange={e=>{setSearch(e.target.value);setSelected(null);}}
-        placeholder="🔍 Search pilot..."
-        style={{width:140,background:"#0a1118",border:"1px solid #1e2730",borderRadius:6,
-          color:"#e8edf2",fontSize:16,padding:"5px 10px",fontFamily:"'JetBrains Mono',monospace",outline:"none"}}/>
-    </div>
+
 
     {/* Weather strip */}
     {wx&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10,padding:"8px 10px",
@@ -2856,12 +2860,13 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   🚫 NO-GO NOW
                 </span>}
                 {cwDot&&(()=>{
-                  const allItems=[...cw.expired,...cw.expiring,...cw.warning];
+                  const allItems=[...cw.expired,...cw.expiring,...cw.warning,...cw.watch];
                   const tipLines=allItems.map(i=>{
-                    const label=i.days<0?`EXPIRED ${Math.abs(i.days)}d ago`:i.days===0?'expires TODAY':`expires in ${i.days}d`;
-                    return `${i.name||i.cert||'?'} — ${label}`;
+                    const dayStr=i.days==null?'no date':i.days<0?`EXPIRED ${Math.abs(i.days)}d ago`:i.days===0?'expires TODAY':`${i.days}d`;
+                    const icon=i.days<0?'🔴':i.days<=30?'🟠':i.days<=60?'🟡':'🟢';
+                    return `${icon} ${i.label||'?'} — ${dayStr}`;
                   });
-                  return <Tip text={tipLines.join("\n")||"Cert warning"} width={280}>
+                  return <Tip text={tipLines.length?tipLines.join("\n"):"No items"} width={300}>
                   <span style={{fontSize:14,fontWeight:700,padding:"1px 5px",borderRadius:3,cursor:"help",
                     background:`${cwDot}22`,color:cwDot,border:`1px solid ${cwDot}44`}}>
                     🪪 {cw.expired.length>0?`${cw.expired.length} EXP`:cw.expiring.length>0?`${cw.expiring.length} ≤30d`:`${cw.warning.length} ≤60d`}
