@@ -3209,6 +3209,11 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
 
                 {/* ── 3-DAY STACKED TIMELINE ── */}
                 {(()=>{
+                  // Variables shared with quick stats — defined here since timeline now renders first
+                  const yf = (c.yesterdayFlights||[]).sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
+                  const todayComp = c.todayFlights.filter(f=>f._status==="completed").sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
+                  const todayActive = c.todayFlights.filter(f=>f._status!=="completed").sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
+                  const tmrwSorted = [...c.tomorrowFlights].filter(f=>f.startTaxi).sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
                   // Zoom-aware timeline bounds — always centered on Alaska NOW
                   const ZOOM_SPANS = [20*60, 12*60, 6*60, 3*60, 90];
                   const ZOOM_TICKS  = [60, 30, 15, 5, 1];
