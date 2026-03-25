@@ -3852,7 +3852,7 @@ End: ${endReason}`;
                             const fc=isEnR?"#ffd740":isComp?day.color:day.isTmrw?"#8a5abf":"#3a6a9a";
                             const fHov=hoveredFlight?.di===di&&hoveredFlight?.fi===fi;
                             return <div key={fi}
-                              onMouseEnter={()=>setHoveredFlight({di,fi,f,fc,off,on,sun})}
+                              onMouseEnter={e=>setHoveredFlight({di,fi,f,fc,off,on,sun,mx:e.clientX,my:e.clientY})}
                               onMouseLeave={()=>setHoveredFlight(null)}
                               style={{position:"absolute",
                                 top:isSch?6:3,height:isSch?ROW_H-12:ROW_H-6,
@@ -3880,13 +3880,17 @@ End: ${endReason}`;
                             const visWidthPct=scrollEl2?(scrollEl2.clientWidth/(scrollEl2.scrollWidth||1)*100):100;
                             const visMin=scrollPct, visMax=scrollPct+visWidthPct;
                             const clampedPct=Math.min(Math.max(offPct, visMin+2), visMax-2);
-                            return <div style={{position:"absolute",
-                              bottom:"calc(100% + 6px)",
-                              left:`${Math.min(Math.max(clampedPct,2),98)}%`,
-                              transform:"translateX(-50%)",
+                            const tx = hoveredFlight.mx||0;
+                            const ty = (hoveredFlight.my||0) - 12; // 12px above cursor
+                            // Clamp horizontally so it doesn't bleed off screen
+                            const tipW = 220;
+                            const fixedLeft = Math.min(Math.max(tx - tipW/2, 8), window.innerWidth - tipW - 8);
+                            return <div style={{position:"fixed",
+                              top:"auto",bottom:`${window.innerHeight - ty}px`,
+                              left:`${fixedLeft}px`,
                               background:"#0c1520",border:`1px solid ${fc}55`,
                               borderRadius:6,padding:"8px 11px",fontSize:14,
-                              color:"#c0d4e8",whiteSpace:"nowrap",zIndex:30,
+                              color:"#c0d4e8",whiteSpace:"nowrap",zIndex:9999,
                               boxShadow:"0 4px 20px rgba(0,0,0,0.95)",
                               pointerEvents:"none",minWidth:160}}>
                               <div style={{fontWeight:700,color:fc,fontSize:16,marginBottom:3}}>
