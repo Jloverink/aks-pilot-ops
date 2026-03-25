@@ -3020,13 +3020,29 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const todayCompletedMins=todayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
                   const todayFlyingMins=todayCompletedMins+enrMinsRounded;
                   const yesterdayMins=yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
-                  let msLeft=null,hLeft=0,mLeft=0,sLeft=0;
+                  // Find the NEXT yesterday flight to age out of the 24h window.
+                  // yesterdayInWin[0] may already be past its agesOut (timing lag between
+                  // backend compute and live clock), so scan all of them and pick the next
+                  // one whose agesOut is still in the future.
+                  let msLeft=null,hLeft=0,mLeft=0,sLeft=0,eraseLabel="ERASES IN";
                   if(yesterdayInWin.length){
-                    const oldest=yesterdayInWin[0];
-                    const agesOutMs=new Date(oldest.date+'T'+oldest.startTaxi+':00').getTime()+24*3600000;
-                    msLeft=agesOutMs-now;
-                    if(msLeft>0){const ts=Math.floor(msLeft/1000);hLeft=Math.floor(ts/3600);mLeft=Math.floor((ts%3600)/60);sLeft=(60-wallSec)%60;}
-                    else{msLeft=null;}
+                    const sortedYest=[...yesterdayInWin].sort((a,b)=>{
+                      const aMs=new Date(a.date+'T'+a.startTaxi+':00').getTime();
+                      const bMs=new Date(b.date+'T'+b.startTaxi+':00').getTime();
+                      return aMs-bMs;
+                    });
+                    // If any yesterday flight has already aged out, we're actively erasing
+                    const anyAgedOut=sortedYest.some(f=>(new Date(f.date+'T'+f.startTaxi+':00').getTime()+24*3600000)<=now);
+                    // Find the next one still in the future
+                    const nextToAge=sortedYest.find(f=>(new Date(f.date+'T'+f.startTaxi+':00').getTime()+24*3600000)>now);
+                    if(nextToAge){
+                      const agesOutMs=new Date(nextToAge.date+'T'+nextToAge.startTaxi+':00').getTime()+24*3600000;
+                      msLeft=agesOutMs-now;
+                      const ts=Math.floor(msLeft/1000);
+                      hLeft=Math.floor(ts/3600);mLeft=Math.floor((ts%3600)/60);sLeft=(60-wallSec)%60;
+                      // "NEXT CLEARS" when already mid-erasure, "ERASES IN" for first one
+                      eraseLabel=(anyAgedOut||sortedYest.length>1)?"NEXT CLEARS":"ERASES IN";
+                    }
                   }
                   const totalLive=todayFlyingMins+yesterdayMins;
                   const barCol=totalLive>=480?SC.red:totalLive>=390?SC.orange:totalLive>=300?"#ffd740":SC.green;
@@ -3062,7 +3078,11 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                       <div style={{color:"#2a3a4a",fontSize:24,fontWeight:300,textAlign:"center",padding:"0 3px"}}>=</div>
                       {/* 8-IN-24 — live: today completed + live en-route elapsed + yesterday carry */}
                       {(()=>{
-                        const liveProjected = totalLive + (c.rollingProjected - c.rolling);
+                        // Only add remaining SCHEDULED legs (not en-route) — en-route elapsed
+                        // time is already captured in totalLive via enrMinsRounded, so adding
+                        // enrouteMins from the backend would double-count the active flight.
+                        const schedMinsOnly=(c.schedInWindow||[]).reduce((s,f)=>s+(f.totalMinutes||0),0);
+                        const liveProjected = totalLive + schedMinsOnly;
                         const liveCol = totalLive>=480?SC.red:totalLive>=390?SC.orange:totalLive>=300?"#ffd740":SC.green;
                         const projCol = liveProjected>=480?SC.red:liveProjected>=390?SC.orange:SC.green;
                         const live8Display = showSecs
@@ -3090,10 +3110,10 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                         </>;
                       })()}
                       <div style={{color:"#2a3a4a",fontSize:18,fontWeight:300,textAlign:"center",padding:"0 3px"}}>⏳</div>
-                      {/* ERASES IN */}
+                      {/* ERASES IN / NEXT CLEARS */}
                       <div style={{textAlign:"center"}}>
-                        <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>ERASES IN</div>
-                        <div style={{fontSize:msLeft&&hLeft===0?13:11,fontWeight:700,color:"#ffd740",fontFamily:"monospace"}}>{erasesDisplay}</div>
+                        <div style={{fontSize:12,color:msLeft&&(eraseLabel==="NEXT CLEARS")?"#ff9944":"#7a9ab8",marginBottom:1}}>{eraseLabel}</div>
+                        <div style={{fontSize:msLeft&&hLeft===0?20:17,fontWeight:700,color:eraseLabel==="NEXT CLEARS"?"#ff9944":"#ffd740",fontFamily:"monospace"}}>{erasesDisplay}</div>
                       </div>
                     </div>
                     {/* Combined bar: today blue, yesterday orange */}
