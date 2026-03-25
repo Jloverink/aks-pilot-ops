@@ -3011,11 +3011,10 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const allCompleted = c.inWindowFlights||[];
 
                   // ── YEST LEFT: live partial-intersection countdown ──────────────
-                  // For each yesterday flight, count only the portion whose block time
-                  // still falls inside the live 24h window [windowStartMs, now].
-                  // As windowStartMs sweeps through a block, we lose seconds in real time.
-                  // Between blocks, the value is flat (windowStart is in a gap).
-                  const yesterdayFlightsAll = allCompleted.filter(f=>f.date<todayStr&&f.startTaxi&&f.totalMinutes>0);
+                  // Use c.yesterdayFlights (ALL yesterday completed, no window pre-filter)
+                  // so flights that STARTED before windowStartMs but END after it are included.
+                  // inWindowFlights misses those because it filters by startTaxi >= windowStartMs.
+                  const yesterdayFlightsAll = (c.yesterdayFlights||[]).filter(f=>f.startTaxi&&f.totalMinutes>0);
                   let yesterdayMins = 0;
                   let windowInsideYestBlock = false; // true = actively erasing right now (seconds ticking)
                   for(const f of yesterdayFlightsAll){
