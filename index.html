@@ -3089,8 +3089,8 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
 
                   // ── ERASES IN countdown ────────────────────────────────────────
                   let msLeft=null,hLeft=0,mLeft=0,sLeft=0,eraseLabel="ERASES IN";
-                  if(yesterdayInWin.length){
-                    const sortedYest=[...yesterdayInWin].sort((a,b)=>
+                  if(yesterdayFlightsAll.length){
+                    const sortedYest=[...yesterdayFlightsAll].sort((a,b)=>
                       new Date(a.date+'T'+a.startTaxi+':00').getTime()-new Date(b.date+'T'+b.startTaxi+':00').getTime()
                     );
                     const anyAgedOut = sortedYest.some(f=>(new Date(f.date+'T'+f.startTaxi+':00').getTime()+24*3600000)<=now);
