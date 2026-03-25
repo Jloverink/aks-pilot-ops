@@ -3004,164 +3004,197 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                 {(()=>{
                   const now = clockMs;
                   const wallSec = Math.floor(now/1000)%60;
-                  const inWin = c.inWindowFlights||[];
-                  const yesterdayInWin = inWin.filter(f=>f.date<todayStr&&f.startTaxi&&f.totalMinutes>0);
-                  const todayInWin     = inWin.filter(f=>f.date===todayStr&&f.totalMinutes>0);
-                  const akNowForEnr = new Date(now);
-                  const akNowHHMMEnr = String(akNowForEnr.getHours()).padStart(2,'0')+':'+String(akNowForEnr.getMinutes()).padStart(2,'0');
-                  const todayStr2 = todayStr;
-                  // Track both raw elapsed and the cap per en-route flight so we
-                  // know whether ANY flight is still actively accruing (below its ETA cap).
-                  let enrActual=0, anyEnrBelowCap=false;
+                  const nowHHMM = String(new Date(now).getHours()).padStart(2,'0')+':'+String(new Date(now).getMinutes()).padStart(2,'0');
+
+                  // ── Recompute 24h window live against clockMs ──────────────────
+                  // Don't trust the stale backend snapshot for window math.
+                  const windowStartMs = now - 24*3600000;
+                  const allCompleted = c.inWindowFlights||[]; // pre-filtered completed flights
+
+                  // Yesterday flights: those still in the live 24h window
+                  const yesterdayInWin = allCompleted.filter(f=>{
+                    if(f.date >= todayStr || !f.startTaxi || !f.totalMinutes) return false;
+                    const ms = new Date(f.date+'T'+f.startTaxi+':00').getTime();
+                    return ms >= windowStartMs;
+                  });
+                  const yesterdayMins = yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
+
+                  // Today completed flights in window
+                  const todayCompleted = allCompleted.filter(f=>f.date===todayStr&&f.totalMinutes>0);
+                  const todayCompMins  = todayCompleted.reduce((s,f)=>s+(f.totalMinutes||0),0);
+
+                  // ── Is NOW inside any today block? ─────────────────────────────
+                  // Check completed (startTaxi–stopTaxi) and en-route (startTaxi–ETA)
+                  // This drives whether TODAY ticks up and STATUS = ACCRUING.
+                  let nowInsideTodayBlock = false;
+                  let activeElapsedMins   = 0; // live elapsed on the current active flight
+
+                  // En-route flights: actual takeoff + scheduled duration = ETA cap
                   for(const f of (c.enrouteFlights||[])){
-                    const offTime=f.startTaxi||f.schedOff;
-                    if(offTime&&f.date){
-                      const bMs=new Date(f.date+'T'+offTime+':00').getTime();
-                      const el=Math.max(0,(now-bMs)/60000);
-                      const cap=f.totalMinutes||f._schedDurMins||120;
-                      enrActual+=Math.min(el,cap);
-                      if(el<cap) anyEnrBelowCap=true;
-                    } else { enrActual+=(f.totalMinutes||0); }
-                  }
-                  const enrSchedLive = c.todayFlights
-                    .filter(f=>f._status==='scheduled'&&f.schedOff&&f.schedOff<=akNowHHMMEnr&&f._schedDurMins>0)
-                    .reduce((s,f)=>{const sBMs=new Date(todayStr2+'T'+f.schedOff+':00').getTime();return s+Math.min(Math.max(0,(now-sBMs)/60000),(f._schedDurMins||60));},0);
-                  // Only add enrSchedLive to the live total when there are actual
-                  // en-route flights. Otherwise it grows every clock tick (elapsed time
-                  // since schedOff), causing the total to keep counting after landing.
-                  // enrSchedLive still feeds schedEstMins for the pre-upload display path.
-                  const enrMins = enrActual>0 ? enrActual+enrSchedLive : 0;
-                  const enrTotalSecs=Math.floor(enrMins*60);
-                  const enrMinsRounded=Math.floor(enrTotalSecs/60);
-                  const isLiveEstimate=enrSchedLive>0&&enrActual===0;
-                  const isEnrLive=anyEnrBelowCap; // only tick while below ETA cap
-                  const todayCompletedMins=todayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
-                  const todayFlyingMins=todayCompletedMins+enrMinsRounded;
-                  const yesterdayMins=yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
-                  // Find the NEXT yesterday flight to age out of the 24h window.
-                  // yesterdayInWin[0] may already be past its agesOut (timing lag between
-                  // backend compute and live clock), so scan all of them and pick the next
-                  // one whose agesOut is still in the future.
-                  let msLeft=null,hLeft=0,mLeft=0,sLeft=0,eraseLabel="ERASES IN";
-                  if(yesterdayInWin.length){
-                    const sortedYest=[...yesterdayInWin].sort((a,b)=>{
-                      const aMs=new Date(a.date+'T'+a.startTaxi+':00').getTime();
-                      const bMs=new Date(b.date+'T'+b.startTaxi+':00').getTime();
-                      return aMs-bMs;
-                    });
-                    // If any yesterday flight has already aged out, we're actively erasing
-                    const anyAgedOut=sortedYest.some(f=>(new Date(f.date+'T'+f.startTaxi+':00').getTime()+24*3600000)<=now);
-                    // Find the next one still in the future
-                    const nextToAge=sortedYest.find(f=>(new Date(f.date+'T'+f.startTaxi+':00').getTime()+24*3600000)>now);
-                    if(nextToAge){
-                      const agesOutMs=new Date(nextToAge.date+'T'+nextToAge.startTaxi+':00').getTime()+24*3600000;
-                      msLeft=agesOutMs-now;
-                      const ts=Math.floor(msLeft/1000);
-                      hLeft=Math.floor(ts/3600);mLeft=Math.floor((ts%3600)/60);sLeft=(60-wallSec)%60;
-                      // "NEXT CLEARS" when already mid-erasure, "ERASES IN" for first one
-                      eraseLabel=(anyAgedOut||sortedYest.length>1)?"NEXT CLEARS":"ERASES IN";
+                    const offTime = f.startTaxi||f.schedOff;
+                    if(!offTime||!f.date) continue;
+                    const offMs  = new Date(f.date+'T'+offTime+':00').getTime();
+                    const cap    = f.totalMinutes||f._schedDurMins||120;
+                    const etaMs  = offMs + cap*60000;
+                    if(now >= offMs && now < etaMs){
+                      nowInsideTodayBlock = true;
+                      activeElapsedMins  += (now - offMs)/60000;
+                    } else if(now >= etaMs){
+                      // Past ETA — count full cap, don't tick
+                      activeElapsedMins += cap;
                     }
                   }
-                  const totalLive=todayFlyingMins+yesterdayMins;
-                  const barCol=totalLive>=480?SC.red:totalLive>=390?SC.orange:totalLive>=300?"#ffd740":SC.green;
-                  // Today display
-                  const akNow2=new Date(clockMs);
-                  const akNowHHMM2=String(akNow2.getHours()).padStart(2,'0')+':'+String(akNow2.getMinutes()).padStart(2,'0');
-                  const schedPastNow=c.todayFlights.filter(f=>f._status==="scheduled"&&f.schedOff&&f.schedOff<=akNowHHMM2&&f._schedDurMins>0);
-                  const schedEstMins=schedPastNow.reduce((s,f)=>s+(f._schedDurMins||0),0);
-                  const todayComp2=c.todayFlights.filter(f=>f._status==="completed");
-                  const hasActuals=todayComp2.length>0||(enrMinsRounded>0&&!isLiveEstimate);
-                  const displayMins=todayFlyingMins||(schedEstMins>0?schedEstMins:0);
-                  const isEstimate=!hasActuals&&schedEstMins>0;
-                  const showSecs=isEnrLive;
-                  const liveH=Math.floor(displayMins/60),liveM=Math.floor(displayMins%60),liveS=wallSec;
-                  const todayDisplay=showSecs?`${liveH}:${String(liveM).padStart(2,'0')}:${String(liveS).padStart(2,'0')}`:(fmtMin(displayMins)||"—");
-                  const erasesDisplay=msLeft?`${hLeft>0?hLeft+'h ':''}${String(mLeft).padStart(2,'0')}:${String(sLeft).padStart(2,'0')}`:"—";
-                  return <div style={{background:"rgba(8,14,22,0.9)",border:`1px solid \${barCol}33`,borderRadius:6,padding:"8px 10px",marginBottom:6}}>
+
+                  // Scheduled flights whose window has started but log not yet uploaded:
+                  // if schedOff <= now < schedOff+schedDur, treat as "in block" estimate
+                  if(!nowInsideTodayBlock){
+                    for(const f of (c.todayFlights||[])){
+                      if(f._status!=='scheduled'||!f.schedOff||!f._schedDurMins) continue;
+                      const offMs = new Date(todayStr+'T'+f.schedOff+':00').getTime();
+                      const etaMs = offMs + f._schedDurMins*60000;
+                      if(now >= offMs && now < etaMs){
+                        nowInsideTodayBlock = true;
+                        activeElapsedMins  += (now - offMs)/60000;
+                      }
+                    }
+                  }
+
+                  // TODAY = completed mins + live elapsed on active flight (capped at block end)
+                  const todayFlyingMins = todayCompMins + Math.floor(activeElapsedMins);
+
+                  // ── Is NOW inside a yesterday-window erasure period? ───────────
+                  // Erasing = the windowStartMs is currently sweeping through yesterday flights
+                  // i.e. any yesterday flight's startTaxi+24h is within the next ~30 min or past
+                  const isErasing = yesterdayInWin.some(f=>{
+                    const agesOutMs = new Date(f.date+'T'+f.startTaxi+':00').getTime()+24*3600000;
+                    return agesOutMs > now && agesOutMs <= now+30*60000; // aging out within 30 min
+                  }) || yesterdayInWin.some(f=>{
+                    // Already inside erasure: agesOut is in the past but still counted
+                    const agesOutMs = new Date(f.date+'T'+f.startTaxi+':00').getTime()+24*3600000;
+                    return agesOutMs <= now;
+                  });
+
+                  // ── ERASES IN countdown ────────────────────────────────────────
+                  let msLeft=null,hLeft=0,mLeft=0,sLeft=0,eraseLabel="ERASES IN";
+                  if(yesterdayInWin.length){
+                    const sortedYest=[...yesterdayInWin].sort((a,b)=>
+                      new Date(a.date+'T'+a.startTaxi+':00').getTime()-new Date(b.date+'T'+b.startTaxi+':00').getTime()
+                    );
+                    const anyAgedOut = sortedYest.some(f=>(new Date(f.date+'T'+f.startTaxi+':00').getTime()+24*3600000)<=now);
+                    const nextToAge  = sortedYest.find(f=>(new Date(f.date+'T'+f.startTaxi+':00').getTime()+24*3600000)>now);
+                    if(nextToAge){
+                      const agesOutMs = new Date(nextToAge.date+'T'+nextToAge.startTaxi+':00').getTime()+24*3600000;
+                      msLeft = agesOutMs - now;
+                      const ts = Math.floor(msLeft/1000);
+                      hLeft=Math.floor(ts/3600); mLeft=Math.floor((ts%3600)/60); sLeft=(60-wallSec)%60;
+                      eraseLabel = anyAgedOut ? "NEXT CLEARS" : "ERASES IN";
+                    }
+                  }
+
+                  // ── Totals and display ─────────────────────────────────────────
+                  const totalLive  = todayFlyingMins + yesterdayMins;
+                  const barCol     = totalLive>=480?SC.red:totalLive>=390?SC.orange:totalLive>=300?"#ffd740":SC.green;
+
+                  // Remaining scheduled legs not yet started (pure future)
+                  const schedRemaining = (c.todayFlights||[])
+                    .filter(f=>f._status==='scheduled'&&f.schedOff&&f.schedOff>nowHHMM&&(f._schedDurMins||f.totalMinutes)>0)
+                    .reduce((s,f)=>s+(f._schedDurMins||f.totalMinutes||0),0);
+
+                  const liveProjected = totalLive + schedRemaining;
+                  const liveCol   = totalLive>=480?SC.red:totalLive>=390?SC.orange:totalLive>=300?"#ffd740":SC.green;
+                  const projCol   = liveProjected>=480?SC.red:liveProjected>=390?SC.orange:SC.green;
+
+                  // STATUS
+                  const isAccruing = nowInsideTodayBlock;
+                  let statusVal, statusCol;
+                  if(isAccruing&&isErasing){statusVal="≈ STEADY";statusCol="#ffd740";}
+                  else if(isAccruing)      {statusVal="↑ ACCRUING";statusCol="#4a9eff";}
+                  else if(isErasing)       {statusVal="↓ ERASING";statusCol="#ff9944";}
+                  else                     {statusVal="NEUTRAL";statusCol="#3a5a6a";}
+
+                  // TODAY display — tick seconds only while inside a block
+                  const showSecs  = isAccruing && activeElapsedMins>0;
+                  const liveH=Math.floor(todayFlyingMins/60), liveM=Math.floor(todayFlyingMins%60);
+                  const todayDisplay = showSecs
+                    ? `${liveH}:${String(liveM).padStart(2,'0')}:${String(wallSec).padStart(2,'0')}`
+                    : (fmtMin(todayFlyingMins)||"—");
+
+                  const erasesDisplay = msLeft
+                    ? `${hLeft>0?hLeft+'h ':''}${String(mLeft).padStart(2,'0')}:${String(sLeft).padStart(2,'0')}`
+                    : "—";
+
+                  return <div style={{background:"rgba(8,14,22,0.9)",border:`1px solid ${barCol}33`,borderRadius:6,padding:"8px 10px",marginBottom:6}}>
                     <div style={{fontSize:12,color:"#5a7a8a",fontWeight:700,letterSpacing:"0.08em",marginBottom:5}}>ROLLING 8-IN-24</div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr",gap:0,alignItems:"center",marginBottom:5}}>
+
                       {/* TODAY */}
                       <div style={{textAlign:"center"}}>
-                        <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>{isEstimate?"TODAY~":"TODAY"}</div>
-                        <div style={{fontSize:20,fontWeight:700,color:isEstimate?"#a29bfe":"#4a9eff",fontFamily:"monospace"}}>
-                          {todayDisplay}{isEnrLive&&<span style={{fontSize:12,color:"#ffd740"}}>▶</span>}
+                        <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>TODAY</div>
+                        <div style={{fontSize:20,fontWeight:700,color:"#4a9eff",fontFamily:"monospace"}}>
+                          {todayDisplay}{isAccruing&&<span style={{fontSize:12,color:"#ffd740"}}>▶</span>}
                         </div>
                       </div>
                       <div style={{color:"#2a3a4a",fontSize:24,fontWeight:300,textAlign:"center",padding:"0 3px"}}>+</div>
+
                       {/* YEST LEFT */}
                       <div style={{textAlign:"center"}}>
                         <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>YEST LEFT</div>
-                        <div style={{fontSize:20,fontWeight:700,color:yesterdayMins>0?"#ff9944":"#2a3a4a",fontFamily:"monospace"}}>{yesterdayMins>0?fmtMin(yesterdayMins):"—"}</div>
+                        <div style={{fontSize:20,fontWeight:700,color:yesterdayMins>0?"#ff9944":"#2a3a4a",fontFamily:"monospace"}}>
+                          {yesterdayMins>0?fmtMin(yesterdayMins):"—"}
+                        </div>
                       </div>
                       <div style={{color:"#2a3a4a",fontSize:24,fontWeight:300,textAlign:"center",padding:"0 3px"}}>=</div>
-                      {/* 8-IN-24 — live: today completed + live en-route elapsed + yesterday carry */}
-                      {(()=>{
-                        // Only add remaining SCHEDULED legs (not en-route) — en-route elapsed
-                        // time is already captured in totalLive via enrMinsRounded.
-                        // Re-filter c.schedInWindow by current clock time: the backend snapshot
-                        // may include legs whose schedOff has already passed (departed but
-                        // data not yet updated, or no-shows). Counting them inflates +EN-ROUTE.
-                        const schedMinsOnly=(c.schedInWindow||[])
-                          .filter(f=>f.startTaxi&&f.startTaxi>akNowHHMMEnr)
-                          .reduce((s,f)=>s+(f.totalMinutes||0),0);
-                        const liveProjected = totalLive + schedMinsOnly;
-                        const liveCol = totalLive>=480?SC.red:totalLive>=390?SC.orange:totalLive>=300?"#ffd740":SC.green;
-                        const projCol = liveProjected>=480?SC.red:liveProjected>=390?SC.orange:SC.green;
-                        const live8Display = showSecs
-                          ? `${Math.floor(totalLive/60)}:${String(Math.floor(totalLive%60)).padStart(2,'0')}:${String(liveS).padStart(2,'0')}`
-                          : fmtMin(totalLive);
-                        return <>
-                          <div style={{textAlign:"center"}}>
-                            <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>8-IN-24</div>
-                            <div style={{fontSize:20,fontWeight:700,color:liveCol,fontFamily:"monospace"}}>
-                              {live8Display}{isEnrLive&&<span style={{fontSize:12,color:"#ffd740"}}>▶</span>}
-                            </div>
-                          </div>
-                          <div style={{color:"#2a3a4a",fontSize:24,fontWeight:300,textAlign:"center",padding:"0 3px"}}>+</div>
-                          {/* EN-ROUTE: live projected total (totalLive + remaining scheduled) */}
-                          <div style={{textAlign:"center"}}>
-                            <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>+EN-ROUTE</div>
-                            <div style={{fontSize:20,fontWeight:700,color:projCol,fontFamily:"monospace"}}>{liveProjected>totalLive?fmtMin(liveProjected):"—"}</div>
-                          </div>
-                          <div style={{color:"#2a3a4a",fontSize:21,fontWeight:300,textAlign:"center",padding:"0 3px"}}>→</div>
-                          {/* REMAINING */}
-                          <div style={{textAlign:"center"}}>
-                            <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>REMAINING</div>
-                            <div style={{fontSize:20,fontWeight:700,color:projCol,fontFamily:"monospace"}}>{fmtMin(Math.max(0,480-(liveProjected>totalLive?liveProjected:totalLive)))}</div>
-                          </div>
-                        </>;
-                      })()}
+
+                      {/* 8-IN-24 */}
+                      <div style={{textAlign:"center"}}>
+                        <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>8-IN-24</div>
+                        <div style={{fontSize:20,fontWeight:700,color:liveCol,fontFamily:"monospace"}}>
+                          {showSecs
+                            ? `${Math.floor(totalLive/60)}:${String(Math.floor(totalLive%60)).padStart(2,'0')}:${String(wallSec).padStart(2,'0')}`
+                            : fmtMin(totalLive)||"—"}
+                          {isAccruing&&<span style={{fontSize:12,color:"#ffd740"}}>▶</span>}
+                        </div>
+                      </div>
+                      <div style={{color:"#2a3a4a",fontSize:24,fontWeight:300,textAlign:"center",padding:"0 3px"}}>+</div>
+
+                      {/* SCHED LEFT — remaining future legs */}
+                      <div style={{textAlign:"center"}}>
+                        <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>SCHED LEFT</div>
+                        <div style={{fontSize:20,fontWeight:700,color:projCol,fontFamily:"monospace"}}>{schedRemaining>0?fmtMin(schedRemaining):"—"}</div>
+                      </div>
+                      <div style={{color:"#2a3a4a",fontSize:21,fontWeight:300,textAlign:"center",padding:"0 3px"}}>→</div>
+
+                      {/* REMAINING */}
+                      <div style={{textAlign:"center"}}>
+                        <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>REMAINING</div>
+                        <div style={{fontSize:20,fontWeight:700,color:projCol,fontFamily:"monospace"}}>{fmtMin(Math.max(0,480-liveProjected))}</div>
+                      </div>
                       <div style={{color:"#2a3a4a",fontSize:18,fontWeight:300,textAlign:"center",padding:"0 3px"}}>⏳</div>
-                      {/* WINDOW STATUS */}
-                      {(()=>{
-                        const isErasing=yesterdayMins>0&&msLeft!==null;
-                        const isFlying=isEnrLive;
-                        let statusLabel,statusVal,statusCol;
-                        if(isErasing&&isFlying){statusLabel="STATUS";statusVal="≈ STEADY";statusCol="#ffd740";}
-                        else if(isErasing){statusLabel="STATUS";statusVal="↓ ERASING";statusCol="#ff9944";}
-                        else if(isFlying){statusLabel="STATUS";statusVal="↑ ACCRUING";statusCol="#4a9eff";}
-                        else{statusLabel="STATUS";statusVal="—";statusCol="#2a3a4a";}
-                        return <div style={{textAlign:"center"}}>
-                          <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>{statusLabel}</div>
-                          <div style={{fontSize:14,fontWeight:700,color:statusCol,fontFamily:"monospace",letterSpacing:"0.04em"}}>{statusVal}</div>
-                        </div>;
-                      })()}
+
+                      {/* STATUS */}
+                      <div style={{textAlign:"center"}}>
+                        <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>STATUS</div>
+                        <div style={{fontSize:14,fontWeight:700,color:statusCol,fontFamily:"monospace",letterSpacing:"0.04em"}}>{statusVal}</div>
+                      </div>
                       <div style={{color:"#2a3a4a",fontSize:14,fontWeight:300,textAlign:"center",padding:"0 3px"}}></div>
+
                       {/* ERASES IN / NEXT CLEARS */}
                       <div style={{textAlign:"center"}}>
-                        <div style={{fontSize:12,color:msLeft&&(eraseLabel==="NEXT CLEARS")?"#ff9944":"#7a9ab8",marginBottom:1}}>{eraseLabel}</div>
+                        <div style={{fontSize:12,color:msLeft&&eraseLabel==="NEXT CLEARS"?"#ff9944":"#7a9ab8",marginBottom:1}}>{eraseLabel}</div>
                         <div style={{fontSize:msLeft&&hLeft===0?20:17,fontWeight:700,color:eraseLabel==="NEXT CLEARS"?"#ff9944":"#ffd740",fontFamily:"monospace"}}>{erasesDisplay}</div>
                       </div>
+
                     </div>
                     {/* Combined bar: today blue, yesterday orange */}
                     <div style={{height:3,background:"#1e2730",borderRadius:2,overflow:"hidden"}}>
                       <div style={{height:"100%",display:"flex"}}>
-                        <div style={{width:`\${Math.min(todayFlyingMins/480*100,100)}%`,background:"#4a9eff"}}/>
-                        <div style={{width:`\${Math.min(yesterdayMins/480*100,100)}%`,background:"#ff9944"}}/>
+                        <div style={{width:`${Math.min(todayFlyingMins/480*100,100)}%`,background:"#4a9eff"}}/>
+                        <div style={{width:`${Math.min(yesterdayMins/480*100,100)}%`,background:"#ff9944"}}/>
                       </div>
                     </div>
                   </div>;
                 })()}
+
                 {/* Row B: Cumulative limits */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
                   <StatCell label="THIS MONTH" value={(c.monthHrs||0).toFixed(1)+"h"}
