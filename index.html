@@ -2823,6 +2823,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <div style={{width:8,height:8,borderRadius:"50%",background:col,boxShadow:`0 0 6px ${col}`,flexShrink:0}}/>
                 <span style={{fontSize:18,fontWeight:700,color:"#e0e8f0"}}>{pd.fullName}</span>
+                <span style={{fontSize:16,color:isOpen?"#5aaa8a":"#4a9eff",fontWeight:700,marginLeft:2,transition:"color 0.15s"}}>{isOpen?"▲":"▼"}</span>
                 {c.enrouteLegs>0&&(()=>{
                   const ef=c.enrouteFlights||[];
                   const tail=ef[0]?.tailNumber||"";
@@ -2939,9 +2940,6 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     {nextAgeStr&&<span style={{fontSize:11,color:"#ffd740",fontFamily:"monospace",marginLeft:2}}>⏳{nextAgeStr}</span>}
                   </div></Tip>;
                 })()}              </div>
-              <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                <span style={{fontSize:24,color:isOpen?"#5aaa8a":"#4a9eff",fontWeight:700,transition:"color 0.15s"}}>{isOpen?"▲":"▼"}</span>
-              </div>
             </div>
             {/* Dual progress bars: actual (solid) + projected (faded) */}
             <div style={{height:4,background:"#1e2730",borderRadius:2,overflow:"hidden",marginBottom:2}}>
@@ -3835,7 +3833,7 @@ End: ${endReason}`;
                           </span>;
                         })()}
                       </span>
-                      <span style={{fontSize:20,color:getSection(pd.username,day.key,day.defaultOpen)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,day.key,day.defaultOpen)?"▼":"▶"}</span>
+                      <span style={{fontSize:14,color:getSection(pd.username,day.key,day.defaultOpen)?"#5aaa8a":"#4a9eff",fontWeight:700,marginLeft:4}}>{getSection(pd.username,day.key,day.defaultOpen)?"▼":"▶"}</span>
                     </div>
                     {getSection(pd.username,day.key,day.defaultOpen)&&<div style={{background:"#060a0e",borderRadius:4,padding:"6px 8px",marginTop:3}}>
                       {day.dutyBar&&<DutyBar {...day.dutyBar} flights={day.compFlights}/>}
@@ -4145,10 +4143,10 @@ Useful for tracking mid-year pacing."/>
                         padding:"8px 10px",cursor:"pointer",
                         borderBottom:pilotStatsOpen[pd.username]?"1px solid #1a2530":"none",
                         background:"rgba(74,158,255,0.04)",borderRadius:pilotStatsOpen[pd.username]?"6px 6px 0 0":"6px"}}>
-                      <span style={{fontSize:15,color:"#4a9eff",fontWeight:700,letterSpacing:"0.1em"}}>
+                      <span style={{fontSize:15,color:"#4a9eff",fontWeight:700,letterSpacing:"0.1em",display:"flex",alignItems:"center",gap:5}}>
                         📊 PILOT STATS
+                        <span style={{fontSize:15,color:showPilotStats?"#5aaa8a":"#4a9eff",fontWeight:700}}>{showPilotStats?"▼":"▶"}</span>
                       </span>
-                      <span style={{fontSize:20,color:showPilotStats?"#5aaa8a":"#4a9eff",fontWeight:700,transition:"color 0.15s"}}>{showPilotStats?"▼":"▶"}</span>
                     </div>
                     {showPilotStats&&<div style={{padding:"0 10px 10px"}}>
 
@@ -4223,7 +4221,7 @@ Useful for tracking mid-year pacing."/>
                         window: {msToLocalHHMM(c.windowStartMs)} → {msToLocalHHMM(c.windowStartMs+86400000)}
                       </span>
                     </div>
-                    <span style={{fontSize:20,color:getSection(pd.username,'rolling',false)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,'rolling',false)?"▼":"▶"}</span>
+                    <span style={{fontSize:14,color:getSection(pd.username,'rolling',false)?"#5aaa8a":"#4a9eff",fontWeight:700,marginLeft:6}}>{getSection(pd.username,'rolling',false)?"▼":"▶"}</span>
                   </div>
                   {getSection(pd.username,'rolling',false)&&<div style={{padding:"0 10px 8px"}}>
                     {c.rolling>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:"1px solid #1a2530",fontSize:16}}>
@@ -4271,10 +4269,7 @@ Useful for tracking mid-year pacing."/>
                     {cw.expired.length>0?`${cw.expired.length} EXPIRED`:cw.expiring.length>0?`${cw.expiring.length} ≤30d`:`${cw.warning.length} ≤60d`}
                   </span>}
                 </span>
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  <span style={{fontSize:12,color:"#5a6a7a"}}>via Pilot Status Board</span>
-                  <span style={{fontSize:20,color:getSection(pd.username,'certs',false)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,'certs',false)?"▼":"▶"}</span>
-                </div>
+                <span style={{fontSize:12,color:"#5a6a7a",display:"flex",alignItems:"center",gap:4}}>via Pilot Status Board <span style={{fontSize:14,color:getSection(pd.username,'certs',false)?"#5aaa8a":"#4a9eff",fontWeight:700}}>{getSection(pd.username,'certs',false)?"▼":"▶"}</span></span>
               </div>
               {getSection(pd.username,'certs',false)&&<>
 
@@ -4548,7 +4543,7 @@ function RegsScreen() {
               <div style={{fontSize:16, fontWeight:700, color:reg.color, marginBottom:3}}>{reg.title}</div>
               <div style={{fontSize:15, color:"#7a9ab8"}}>{reg.applies}</div>
             </div>
-            <span style={{fontSize:24, color:"#7a9ab8", marginLeft:8}}>{isOpen?"▲":"▼"}</span>
+            <span style={{fontSize:16,color:"#7a9ab8",marginLeft:5}}>{isOpen?"▲":"▼"}</span>
           </div>
         </div>
 
@@ -5053,7 +5048,7 @@ function CrewScreen({ crewData, onSync, onUploadXlsx, syncing, lastSync, sheetEr
               </div>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 {urgentAppr.length>0&&<span style={{fontSize:14,color:SC.orange}}>✈ {urgentAppr.length} appr</span>}
-                <span style={{fontSize:21,color:"#7a9ab8"}}>{isOpen?"▲":"▼"}</span>
+                <span style={{fontSize:14,color:"#7a9ab8",marginLeft:5}}>{isOpen?"▲":"▼"}</span>
               </div>
             </div>
             {displayItems.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3}}>
@@ -5189,7 +5184,7 @@ function CrewScreen({ crewData, onSync, onUploadXlsx, syncing, lastSync, sheetEr
         <span style={{fontSize:15,fontWeight:700,letterSpacing:"0.1em",color:"#7a9ab8"}}>
           📁 HISTORICAL PILOTS ({historicalPilots.length})
         </span>
-        <span style={{fontSize:18,color:"#7a9ab8"}}>{showHistorical?"▲":"▼"}</span>
+        <span style={{fontSize:14,color:"#7a9ab8",marginLeft:5}}>{showHistorical?"▲":"▼"}</span>
       </button>
       {showHistorical && <div style={{display:"flex",flexDirection:"column",gap:3}}>
         {historicalPilots.map(p=>{
@@ -5209,7 +5204,7 @@ function CrewScreen({ crewData, onSync, onUploadXlsx, syncing, lastSync, sheetEr
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   {p.sepDate&&<span style={{fontSize:14,color:"#7a9ab0"}}>sep: {p.sepDate.slice(0,10)}</span>}
-                  <span style={{fontSize:18,color:"#7a9ab0"}}>{isOpen?"▲":"▼"}</span>
+                  <span style={{fontSize:14,color:"#7a9ab0",marginLeft:5}}>{isOpen?"▲":"▼"}</span>
                 </div>
               </div>
             </div>
@@ -5463,7 +5458,7 @@ function NightScreen({ fleetData, nightCurrencyData, onUploadNightXlsx }) {
               </div>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
                 <span style={{fontSize:20,fontWeight:700,color:col}}>🌙 {pd.nightLandings90}<span style={{fontSize:14,color:"#7a9ab8"}}>/3</span></span>
-                <span style={{fontSize:21,color:"#7a9ab8"}}>{isOpen?"▲":"▼"}</span>
+                <span style={{fontSize:14,color:"#7a9ab8",marginLeft:5}}>{isOpen?"▲":"▼"}</span>
               </div>
             </div>
             {/* Progress bar */}
@@ -5686,7 +5681,7 @@ function TailsScreen({ fleetData, delayData, onImportDelays, routeAvgs }) {
                   <div style={{fontSize:18,fontWeight:700,color:"#e0e8f0"}}>{(t.totalMins/60).toFixed(1)}<span style={{fontSize:14,color:"#7a9ab8"}}>h</span></div>
                   <div style={{fontSize:12,color:"#7a9ab8"}}>{t.completed} legs</div>
                 </div>
-                <span style={{fontSize:21,color:"#7a9ab8"}}>{isOpen?"▲":"▼"}</span>
+                <span style={{fontSize:14,color:"#7a9ab8",marginLeft:5}}>{isOpen?"▲":"▼"}</span>
               </div>
             </div>
             {/* Utilization bar */}
@@ -6089,7 +6084,7 @@ function ReconScreen({ reconData, spiderRows, onRunRecon }) {
                   <span style={{fontSize:18,fontWeight:700,color:"#e0e8f0"}}>{name}</span>
                   {d.unmatchedLegs>0&&<span style={{fontSize:14,color:SC.orange}}>{d.unmatchedLegs} unmatched</span>}
                 </div>
-                <span style={{fontSize:21,color:"#7a9ab8"}}>{isOpen?"▲":"▼"}</span>
+                <span style={{fontSize:14,color:"#7a9ab8",marginLeft:5}}>{isOpen?"▲":"▼"}</span>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:4}}>
                 <div style={{fontSize:15}}>
