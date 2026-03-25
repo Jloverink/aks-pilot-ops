@@ -1228,7 +1228,7 @@ const cityToCode = (s) => {
 };
 
 // ── IMPORT SCREEN ─────────────────────────────────────────────────────────────
-function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew }) {
+function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, loaded }) {
   const [source,setSource]=useState("flightlog");
   const [parsing,setParsing]=useState(false);
   const [preview,setPreview]=useState(null);
@@ -8022,7 +8022,7 @@ function App() {
     if(s==="fuel")    return <FuelScreen/>;
     if(s==="scan")    return <ScanScreen onFlightsScanned={handleScanned}/>;
     if(s==="crew")    return <CrewScreen crewData={crewData} onSync={syncCrew} onUploadXlsx={uploadCrewXlsx} syncing={crewSyncing} lastSync={crewLastSync} sheetError={crewError} sourceMode={crewSource}/>;
-    if(s==="import")  return <ImportScreen onImport={importFlights} onImportFleet={importFleet} onUploadQuals={uploadQuals} onUploadCrew={uploadCrewXlsx}/>;
+    if(s==="import")  return <ImportScreen onImport={importFlights} onImportFleet={importFleet} onUploadQuals={uploadQuals} onUploadCrew={uploadCrewXlsx} loaded={loaded}/>;
     if(s==="regs")    return <RegsScreen/>;
     if(s==="quals")   return <QualsScreen qualsData={qualsData} onUpload={uploadQuals} fleetData={fleetData}/>;
     if(s==="stats")   return <StatsScreen fleetData={fleetData} routeAvgs={routeAvgs}/>;
