@@ -3035,8 +3035,9 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   // tick at 1s/s so they share the same wallSec.
                   const yestH = Math.floor(yesterdayMins/60);
                   const yestM = yesterdayMins%60;
+                  const downSec = 59 - wallSec; // YEST LEFT counts DOWN
                   const yesterdayDisplay = windowInsideYestBlock
-                    ? `${yestH>0?yestH+':':''}${String(yestM).padStart(yestH>0?2:1,'0')}:${String(wallSec).padStart(2,'0')}`
+                    ? `${yestH>0?yestH+':':''}${String(yestM).padStart(yestH>0?2:1,'0')}:${String(downSec).padStart(2,'0')}`
                     : fmtMin(yesterdayMins);
 
                   // Today completed flights in window
@@ -3174,8 +3175,11 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                           {(()=>{
                               const totalMins = todayFlyingMins + yesterdayMins;
                               const tH=Math.floor(totalMins/60),tM=totalMins%60;
-                              return (showSecs||windowInsideYestBlock)
-                                ? `${tH>0?tH+':':''}${String(tM).padStart(tH>0?2:1,'0')}:${String(wallSec).padStart(2,'0')}`
+                              const netSec = isAccruing&&!windowInsideYestBlock ? wallSec  // net up
+                                           : !isAccruing&&windowInsideYestBlock ? downSec // net down
+                                           : null; // steady — suppress seconds (near-zero net)
+                              return (showSecs||windowInsideYestBlock)&&netSec!==null
+                                ? `${tH>0?tH+':':''}${String(tM).padStart(tH>0?2:1,'0')}:${String(netSec).padStart(2,'0')}`
                                 : fmtMin(totalLive)||"—";
                             })()}
                           {(isAccruing||windowInsideYestBlock)&&<span style={{fontSize:12,color:isAccruing?"#ffd740":"#ff9944"}}>{isAccruing?"▶":"▼"}</span>}
