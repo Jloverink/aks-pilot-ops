@@ -2766,6 +2766,19 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
         const todayActDuty=c.dutyDays[todayStr];
         const tmrwProjDuty=c.projectedDutyDays[tomorrowStr];
         const yestActDuty=c.dutyDays[yesterdayStr];
+        const StatCell = ({label,value,sub,color,warn,tip}) => (
+          <Tip text={tip||""} width={200}>
+            <div style={{background:"#0a1018",borderRadius:5,padding:"9px 10px",
+              border:`1px solid ${warn?"#ff6d0055":"#1a2530"}`,cursor:tip?"help":"default",
+              width:"100%"}}>
+              <div style={{fontSize:14,color:"#8aaabb",letterSpacing:"0.06em",marginBottom:3,fontWeight:600}}>
+                {label}{tip&&<span style={{color:"#3a5a6a",marginLeft:3}}>?</span>}
+              </div>
+              <div style={{fontSize:22,fontWeight:700,color:color||"#d0dae8",lineHeight:1}}>{value||"—"}</div>
+              {sub&&<div style={{fontSize:14,color:warn?"#ff9944":"#6a8aaa",marginTop:3}}>{sub}</div>}
+            </div>
+          </Tip>
+        );
 
         const cw = getPilotCrewWarnings(pd.fullName, crewData);
         const cwDot = cw ? (cw.worstStatus==="red"?"#ff4757":cw.worstStatus==="orange"?"#ff6d00":cw.worstStatus==="yellow"?"#ffd740":null) : null;
@@ -3967,19 +3980,6 @@ End: ${endReason}`;
               }
               const restOk = restMins === null ? null : restMins >= 540; // 9hr min rest
 
-              const StatCell = ({label,value,sub,color,warn,tip}) => (
-                <Tip text={tip||""} width={200}>
-                  <div style={{background:"#0a1018",borderRadius:5,padding:"9px 10px",
-                    border:`1px solid ${warn?"#ff6d0055":"#1a2530"}`,cursor:tip?"help":"default",
-                    width:"100%"}}>
-                    <div style={{fontSize:14,color:"#8aaabb",letterSpacing:"0.06em",marginBottom:3,fontWeight:600}}>
-                      {label}{tip&&<span style={{color:"#3a5a6a",marginLeft:3}}>?</span>}
-                    </div>
-                    <div style={{fontSize:22,fontWeight:700,color:color||"#d0dae8",lineHeight:1}}>{value||"—"}</div>
-                    {sub&&<div style={{fontSize:14,color:warn?"#ff9944":"#6a8aaa",marginTop:3}}>{sub}</div>}
-                  </div>
-                </Tip>
-              );
 
               return <>
                 {/* Row 1: Yesterday */}
