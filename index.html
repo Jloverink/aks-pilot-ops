@@ -2642,30 +2642,30 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
   })();
 
   return <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:8}}>
-      <div>
-        <div style={{fontSize:20,fontWeight:700,letterSpacing:"0.1em",color:"#e0e8f0"}}>FLEET COMPLIANCE</div>
-        {lastUpdatedRel&&<div style={{fontSize:12,color:"#5a7a8a",marginTop:2}}>
-          📂 Last import: <span style={{color:"#7a9ab8"}}>{lastUpdatedRel}</span>
-          <span style={{color:"#3a5060",marginLeft:6}}>{lastUpdated}</span>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,gap:8}}>
+      <div style={{fontSize:20,fontWeight:700,letterSpacing:"0.1em",color:"#e0e8f0"}}>FLEET COMPLIANCE</div>
+      {/* Quick-import button stacked with last-import timestamp */}
+      <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3,flexShrink:0}}>
+        <div
+          onDragOver={e=>{e.preventDefault();setQuickDrag(true);}}
+          onDragLeave={()=>setQuickDrag(false)}
+          onDrop={e=>{e.preventDefault();setQuickDrag(false);const f=e.dataTransfer.files[0];if(f)doQuickImport(f);}}
+          onClick={()=>quickFileRef.current?.click()}
+          style={{display:"flex",alignItems:"center",gap:7,padding:"6px 12px",borderRadius:5,cursor:"pointer",
+            border:`1px solid ${quickDrag?"#4a9eff":"rgba(74,158,255,0.35)"}`,
+            background:quickDrag?"rgba(74,158,255,0.15)":quickImporting?"rgba(74,158,255,0.08)":"rgba(74,158,255,0.05)",
+            transition:"all 0.15s"}}>
+          <input ref={quickFileRef} type="file" accept=".xlsx" style={{display:"none"}}
+            onChange={e=>{const f=e.target.files?.[0];if(f){doQuickImport(f);e.target.value="";}}}/>
+          <span style={{fontSize:15}}>{quickImporting?"⏳":"📂"}</span>
+          <span style={{fontSize:13,fontWeight:700,color:"#4a9eff",fontFamily:"'JetBrains Mono',monospace"}}>
+            {quickImporting?"IMPORTING…":"UPLOAD FLIGHT LOG"}
+          </span>
+        </div>
+        {lastUpdatedRel&&<div style={{fontSize:11,color:"#5a7a8a",textAlign:"right",lineHeight:1.3}}>
+          last import <span style={{color:"#7a9ab8"}}>{lastUpdatedRel}</span>
+          <span style={{color:"#3a5060",display:"block",fontSize:10}}>{lastUpdated}</span>
         </div>}
-      </div>
-      {/* Quick-import button */}
-      <div
-        onDragOver={e=>{e.preventDefault();setQuickDrag(true);}}
-        onDragLeave={()=>setQuickDrag(false)}
-        onDrop={e=>{e.preventDefault();setQuickDrag(false);const f=e.dataTransfer.files[0];if(f)doQuickImport(f);}}
-        onClick={()=>quickFileRef.current?.click()}
-        style={{display:"flex",alignItems:"center",gap:8,padding:"7px 14px",borderRadius:5,cursor:"pointer",
-          border:`1px solid ${quickDrag?"#4a9eff":"rgba(74,158,255,0.35)"}`,
-          background:quickDrag?"rgba(74,158,255,0.15)":quickImporting?"rgba(74,158,255,0.08)":"rgba(74,158,255,0.05)",
-          transition:"all 0.15s"}}>
-        <input ref={quickFileRef} type="file" accept=".xlsx" style={{display:"none"}}
-          onChange={e=>{const f=e.target.files?.[0];if(f){doQuickImport(f);e.target.value="";}}}/>
-        <span style={{fontSize:16}}>{quickImporting?"⏳":"📂"}</span>
-        <span style={{fontSize:13,fontWeight:700,color:"#4a9eff",fontFamily:"'JetBrains Mono',monospace"}}>
-          {quickImporting?"IMPORTING…":"UPLOAD FLIGHT LOG"}
-        </span>
       </div>
     </div>
 
@@ -2836,10 +2836,11 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     ✎ DUTY
                   </span>
                 </Tip>
-                {qualWarnings.length>0&&<span style={{fontSize:14,fontWeight:700,padding:"1px 5px",borderRadius:3,
+                {qualWarnings.length>0&&<Tip text={qualWarnings.map(w=>w.msg).join("\n")} width={240}>
+                <span style={{fontSize:14,fontWeight:700,padding:"1px 5px",borderRadius:3,cursor:"help",
                   background:"rgba(255,71,87,0.15)",color:SC.red,border:"1px solid rgba(255,71,87,0.35)"}}>
                   ⚠ {qualWarnings.length} QUALS
-                </span>}
+                </span></Tip>}
                 {c.consecutiveDays>=5&&<span style={{fontSize:14,fontWeight:700,padding:"1px 5px",borderRadius:3,
                   background:c.consecutiveDays>=7?"rgba(255,71,87,0.15)":"rgba(255,109,0,0.12)",
                   color:c.consecutiveDays>=7?SC.red:SC.orange,
@@ -2854,9 +2855,18 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   background:"rgba(255,71,87,0.15)",color:SC.red,border:"1px solid rgba(255,71,87,0.4)"}}>
                   🚫 NO-GO NOW
                 </span>}
-                {cwDot&&<span style={{fontSize:14,fontWeight:700,padding:"1px 5px",borderRadius:3,background:`${cwDot}22`,color:cwDot,border:`1px solid ${cwDot}44`}}>
-                  🪪 {cw.expired.length>0?`${cw.expired.length} EXP`:cw.expiring.length>0?`${cw.expiring.length} ≤30d`:`${cw.warning.length} ≤60d`}
-                </span>}
+                {cwDot&&(()=>{
+                  const allItems=[...cw.expired,...cw.expiring,...cw.warning];
+                  const tipLines=allItems.map(i=>{
+                    const label=i.days<0?`EXPIRED ${Math.abs(i.days)}d ago`:i.days===0?'expires TODAY':`expires in ${i.days}d`;
+                    return `${i.name||i.cert||'?'} — ${label}`;
+                  });
+                  return <Tip text={tipLines.join("\n")||"Cert warning"} width={280}>
+                  <span style={{fontSize:14,fontWeight:700,padding:"1px 5px",borderRadius:3,cursor:"help",
+                    background:`${cwDot}22`,color:cwDot,border:`1px solid ${cwDot}44`}}>
+                    🪪 {cw.expired.length>0?`${cw.expired.length} EXP`:cw.expiring.length>0?`${cw.expiring.length} ≤30d`:`${cw.warning.length} ≤60d`}
+                  </span></Tip>;
+                })()}
                 {/* Mini 8-in-24 strip — inline with badges, mirrors expanded row */}
                 {!isOpen&&(()=>{
                   const now2=Date.now();
