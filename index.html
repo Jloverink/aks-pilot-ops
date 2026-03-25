@@ -3007,17 +3007,36 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const nowHHMM = String(new Date(now).getHours()).padStart(2,'0')+':'+String(new Date(now).getMinutes()).padStart(2,'0');
 
                   // ── Recompute 24h window live against clockMs ──────────────────
-                  // Don't trust the stale backend snapshot for window math.
                   const windowStartMs = now - 24*3600000;
-                  const allCompleted = c.inWindowFlights||[]; // pre-filtered completed flights
+                  const allCompleted = c.inWindowFlights||[];
 
-                  // Yesterday flights: those still in the live 24h window
-                  const yesterdayInWin = allCompleted.filter(f=>{
-                    if(f.date >= todayStr || !f.startTaxi || !f.totalMinutes) return false;
-                    const ms = new Date(f.date+'T'+f.startTaxi+':00').getTime();
-                    return ms >= windowStartMs;
-                  });
-                  const yesterdayMins = yesterdayInWin.reduce((s,f)=>s+(f.totalMinutes||0),0);
+                  // ── YEST LEFT: live partial-intersection countdown ──────────────
+                  // For each yesterday flight, count only the portion whose block time
+                  // still falls inside the live 24h window [windowStartMs, now].
+                  // As windowStartMs sweeps through a block, we lose seconds in real time.
+                  // Between blocks, the value is flat (windowStart is in a gap).
+                  const yesterdayFlightsAll = allCompleted.filter(f=>f.date<todayStr&&f.startTaxi&&f.totalMinutes>0);
+                  let yesterdayMins = 0;
+                  let windowInsideYestBlock = false; // true = actively erasing right now (seconds ticking)
+                  for(const f of yesterdayFlightsAll){
+                    const offMs = new Date(f.date+'T'+f.startTaxi+':00').getTime();
+                    const onMs  = offMs + (f.totalMinutes||0)*60000;
+                    // Clip to window: only count the slice [windowStartMs, onMs] ∩ [offMs, now]
+                    const sliceStart = Math.max(offMs, windowStartMs);
+                    const sliceEnd   = Math.min(onMs, now);
+                    const inWindowMs = Math.max(0, sliceEnd - sliceStart);
+                    yesterdayMins += inWindowMs / 60000;
+                    // Are we currently mid-erasure on this flight?
+                    if(windowStartMs >= offMs && windowStartMs < onMs) windowInsideYestBlock = true;
+                  }
+                  // Show seconds on YEST LEFT when windowStart is inside a yesterday block
+                  const yesterdayTotalSecs = Math.floor(yesterdayMins * 60);
+                  const yestH = Math.floor(yesterdayTotalSecs/3600);
+                  const yestM = Math.floor((yesterdayTotalSecs%3600)/60);
+                  const yestS = yesterdayTotalSecs%60;
+                  const yesterdayDisplay = windowInsideYestBlock
+                    ? `${yestH>0?yestH+':':''}${String(yestM).padStart(yestH>0?2:1,'0')}:${String(yestS).padStart(2,'0')}`
+                    : fmtMin(yesterdayMins);
 
                   // Today completed flights in window
                   const todayCompleted = allCompleted.filter(f=>f.date===todayStr&&f.totalMinutes>0);
@@ -3065,14 +3084,8 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   // ── Is NOW inside a yesterday-window erasure period? ───────────
                   // Erasing = the windowStartMs is currently sweeping through yesterday flights
                   // i.e. any yesterday flight's startTaxi+24h is within the next ~30 min or past
-                  const isErasing = yesterdayInWin.some(f=>{
-                    const agesOutMs = new Date(f.date+'T'+f.startTaxi+':00').getTime()+24*3600000;
-                    return agesOutMs > now && agesOutMs <= now+30*60000; // aging out within 30 min
-                  }) || yesterdayInWin.some(f=>{
-                    // Already inside erasure: agesOut is in the past but still counted
-                    const agesOutMs = new Date(f.date+'T'+f.startTaxi+':00').getTime()+24*3600000;
-                    return agesOutMs <= now;
-                  });
+                  // isErasing = windowStart is currently sweeping through a yesterday block
+                  const isErasing = windowInsideYestBlock;
 
                   // ── ERASES IN countdown ────────────────────────────────────────
                   let msLeft=null,hLeft=0,mLeft=0,sLeft=0,eraseLabel="ERASES IN";
@@ -3140,7 +3153,8 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                       <div style={{textAlign:"center"}}>
                         <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>YEST LEFT</div>
                         <div style={{fontSize:20,fontWeight:700,color:yesterdayMins>0?"#ff9944":"#2a3a4a",fontFamily:"monospace"}}>
-                          {yesterdayMins>0?fmtMin(yesterdayMins):"—"}
+                          {yesterdayMins>0?yesterdayDisplay:"—"}
+                          {windowInsideYestBlock&&yesterdayMins>0&&<span style={{fontSize:12,color:"#ff9944"}}>▼</span>}
                         </div>
                       </div>
                       <div style={{color:"#2a3a4a",fontSize:24,fontWeight:300,textAlign:"center",padding:"0 3px"}}>=</div>
@@ -3149,10 +3163,14 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                       <div style={{textAlign:"center"}}>
                         <div style={{fontSize:12,color:"#7a9ab8",marginBottom:1}}>8-IN-24</div>
                         <div style={{fontSize:20,fontWeight:700,color:liveCol,fontFamily:"monospace"}}>
-                          {showSecs
-                            ? `${Math.floor(totalLive/60)}:${String(Math.floor(totalLive%60)).padStart(2,'0')}:${String(wallSec).padStart(2,'0')}`
-                            : fmtMin(totalLive)||"—"}
-                          {isAccruing&&<span style={{fontSize:12,color:"#ffd740"}}>▶</span>}
+                          {(()=>{
+                              const totalSecs = Math.floor(todayFlyingMins*60) + yesterdayTotalSecs;
+                              const tH=Math.floor(totalSecs/3600),tM=Math.floor((totalSecs%3600)/60),tS=totalSecs%60;
+                              return (showSecs||windowInsideYestBlock)
+                                ? `${tH>0?tH+':':''}${String(tM).padStart(tH>0?2:1,'0')}:${String(tS).padStart(2,'0')}`
+                                : fmtMin(totalLive)||"—";
+                            })()}
+                          {(isAccruing||windowInsideYestBlock)&&<span style={{fontSize:12,color:isAccruing?"#ffd740":"#ff9944"}}>{isAccruing?"▶":"▼"}</span>}
                         </div>
                       </div>
                       <div style={{color:"#2a3a4a",fontSize:24,fontWeight:300,textAlign:"center",padding:"0 3px"}}>+</div>
