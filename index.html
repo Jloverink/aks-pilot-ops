@@ -2754,6 +2754,14 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
     <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:14}}>
       {filteredSorted.map((pd,idx)=>{
         const c=pd.compliance;
+        // ── Shared vars hoisted to pilot card scope ──────────────────────────
+        // These are used across multiple sections (timeline, qs grid, leg details).
+        // Defining them here prevents scope errors if sections are reordered.
+        const yf         = (c.yesterdayFlights||[]).sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
+        const todayComp  = c.todayFlights.filter(f=>f._status==="completed").sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
+        const todayActive= c.todayFlights.filter(f=>f._status!=="completed").sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
+        const tmrwSorted = [...c.tomorrowFlights].filter(f=>f.startTaxi).sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
+        // ─────────────────────────────────────────────────────────────────────
         const myTier = activeToday(pd);
         const prevTier = idx>0 ? activeToday(filteredSorted[idx-1]) : myTier;
         const showDivider = idx>0 && myTier !== prevTier;
@@ -3222,11 +3230,6 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
 
                 {/* ── 3-DAY STACKED TIMELINE ── */}
                 {(()=>{
-                  // Variables shared with quick stats — defined here since timeline now renders first
-                  const yf = (c.yesterdayFlights||[]).sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
-                  const todayComp = c.todayFlights.filter(f=>f._status==="completed").sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
-                  const todayActive = c.todayFlights.filter(f=>f._status!=="completed").sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
-                  const tmrwSorted = [...c.tomorrowFlights].filter(f=>f.startTaxi).sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
                   // Zoom-aware timeline bounds — always centered on Alaska NOW
                   const ZOOM_SPANS = [20*60, 12*60, 6*60, 3*60, 90];
                   const ZOOM_TICKS  = [60, 30, 15, 5, 1];
@@ -3946,10 +3949,6 @@ End: ${endReason}`;
 {/* ── QUICK STATS GRID ── */}
             {(()=>{
               if(!getSection(pd.username,'quickstats',true)) return null;
-              const yf = (c.yesterdayFlights||[]).sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
-              const todayComp = c.todayFlights.filter(f=>f._status==="completed").sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
-              const todayActive = c.todayFlights.filter(f=>f._status!=="completed").sort((a,b)=>(a.startTaxi||'').localeCompare(b.startTaxi||''));
-              const tmrwSorted = [...c.tomorrowFlights].filter(f=>f.startTaxi).sort((a,b)=>a.startTaxi.localeCompare(b.startTaxi));
 
               // Yesterday totals
               const yestFltMins = yf.reduce((s,f)=>s+(f.totalMinutes||0),0);
