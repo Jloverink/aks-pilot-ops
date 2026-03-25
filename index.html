@@ -1495,7 +1495,7 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, lo
   };
 
   // ── Rolling 8-in-24 from real timestamps ────────────────────────────────────
-  const computeRolling8 = (flights) => {
+  const computeFleetCompliance = (flights) => {
     const completed = flights.filter(f=>f._status==='completed'&&f.totalMinutes>0);
     const enroute   = flights.filter(f=>f._status==='enroute');
     const scheduled = flights.filter(f=>f._status==='scheduled');
@@ -1566,7 +1566,7 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, lo
           completed: flights.filter(f=>f._status==='completed'),
           enroute:   flights.filter(f=>f._status==='enroute'),
           scheduled: flights.filter(f=>f._status==='scheduled'),
-          compliance: computeRolling8(flights),
+          compliance: computeFleetCompliance(flights),
         };
       });
       setPreview({pilotData, usernames, routeAvgs});
