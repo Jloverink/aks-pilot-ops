@@ -1973,8 +1973,42 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
     const ms=dtToMs(f.date,f.startTaxi);
     return ms && ms>=nowMs && f.date===todayStr;
   });
+
+  // ── Time-aware projection ─────────────────────────────────────────────────
+  // For each scheduled leg, compute the 8-in-24 window AT the moment that leg
+  // departs — not the window right now. Yesterday flights that will have aged
+  // out by departure time are excluded, giving a realistic projection.
+  // This prevents false NO-GO warnings when yesterday time erases before the leg flies.
+  let rollingProjected = rolling + enrouteMins; // start with what's real right now
+  let peakProjected    = rollingProjected;      // track the maximum reached during the day
+  let runningCompleted = rolling - enrouteMins; // completed-only baseline (no enroute)
+  
+  // Walk scheduled legs in departure order, simulating the window at each departure
+  const schedSorted = [...schedInWindow].sort((a,b)=>
+    (a.date+(a.startTaxi||'00:00')).localeCompare(b.date+(b.startTaxi||'00:00'))
+  );
+  
+  let simCompleted = runningCompleted; // completed mins in window at sim time
+  for(const f of schedSorted){
+    const depMs = dtToMs(f.date, f.startTaxi||'00:00');
+    if(!depMs) continue;
+    const simWindowStart = depMs - 24*3600000;
+    // Recompute how much of yesterday is still in window at this departure time
+    const yestInWindowAtDep = sortedComp
+      .filter(fc=>{ const ms=dtToMs(fc.date,fc.startTaxi); return ms&&ms>=simWindowStart&&fc.date<todayStr; })
+      .reduce((s,fc)=>s+(fc.totalMinutes||0),0);
+    const todayCompAtDep = sortedComp
+      .filter(fc=>fc.date===todayStr)
+      .reduce((s,fc)=>s+(fc.totalMinutes||0),0);
+    // 8-in-24 at departure = yesterday still in window + today completed so far + this leg
+    const projAtDep = yestInWindowAtDep + todayCompAtDep + enrouteMins + (f.totalMinutes||0);
+    if(projAtDep > peakProjected) peakProjected = projAtDep;
+    // Accumulate for subsequent legs
+    simCompleted += (f.totalMinutes||0);
+  }
+  // rollingProjected = realistic peak (may be lower than naive sum if yesterday erases)
   const schedMins = schedInWindow.reduce((s,f)=>s+(f.totalMinutes||0),0);
-  const rollingProjected = rolling + enrouteMins + schedMins;
+  rollingProjected = peakProjected;
 
   // Also compute next-day projection: worst-case 24h window anchored on first
   // scheduled departure (shows what 8-in-24 will look like at start of next duty day)
@@ -1998,7 +2032,8 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   }
 
   const status          = rolling>=480?"red":rolling>=390?"orange":rolling>=300?"yellow":"green";
-  const statusProjected = rollingProjected>=480?"red":rollingProjected>=390?"orange":rollingProjected>=300?"yellow":"green";
+  // statusProjected reflects realistic peak — close but not over = watch, not red
+  const statusProjected = rollingProjected>=480?"red":rollingProjected>=420?"orange":rollingProjected>=360?"yellow":"green";
   const statusNextDay   = nextDayProjected>=480?"red":nextDayProjected>=390?"orange":nextDayProjected>=300?"yellow":"green";
 
   // ── No-go time prediction ─────────────────────────────────────────────────
@@ -2007,26 +2042,28 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   const LIMIT = 480;
 
   if(rollingProjected >= LIMIT) {
-    // Walk through flights in the projected window chronologically and find crossing point
-    const inWindow = [
-      ...sortedComp.filter(f=>{ const ms=dtToMs(f.date,f.startTaxi); return ms&&ms>=windowStartMs; }),
-      ...enroute,
-      ...schedInWindow,
-    ].sort((a,b)=>(a.date+(a.startTaxi||'00:00')).localeCompare(b.date+(b.startTaxi||'00:00')));
-
-    let cumMins = 0;
-    for(const f of inWindow) {
-      const prevCum = cumMins;
-      cumMins += f.totalMinutes||0;
-      if(cumMins >= LIMIT) {
-        // Crosses limit during this leg
-        const minsNeeded = LIMIT - prevCum;
-        const startMs = dtToMs(f.date, f.startTaxi||'00:00');
-        if(startMs) noGoMs = startMs + minsNeeded*60000;
+    // Time-aware no-go: find the exact minute the limit is hit, accounting for
+    // yesterday time erasing as the day progresses
+    for(const f of schedSorted){
+      const depMs = dtToMs(f.date, f.startTaxi||'00:00');
+      if(!depMs) continue;
+      const simWindowStart = depMs - 24*3600000;
+      const yestAtDep = sortedComp
+        .filter(fc=>{ const ms=dtToMs(fc.date,fc.startTaxi); return ms&&ms>=simWindowStart&&fc.date<todayStr; })
+        .reduce((s,fc)=>s+(fc.totalMinutes||0),0);
+      const todayAtDep = sortedComp.filter(fc=>fc.date===todayStr).reduce((s,fc)=>s+(fc.totalMinutes||0),0);
+      const beforeThisLeg = yestAtDep + todayAtDep + enrouteMins;
+      const afterThisLeg  = beforeThisLeg + (f.totalMinutes||0);
+      if(afterThisLeg >= LIMIT && beforeThisLeg < LIMIT) {
+        const minsNeeded = LIMIT - beforeThisLeg;
+        noGoMs = depMs + minsNeeded*60000;
+        break;
+      } else if(beforeThisLeg >= LIMIT) {
+        noGoMs = depMs; // already over at departure
         break;
       }
     }
-    if(!noGoMs) noGoMs = nowMs; // already over
+    if(!noGoMs) noGoMs = nowMs;
   }
 
   // Also compute "clears at" — when does the oldest in-window flight age out enough
