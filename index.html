@@ -3771,8 +3771,19 @@ End: ${endReason}`;
                                 <span style={{color:"#7a9ab0",marginLeft:6}}>{fmtMin(f.totalMinutes)}</span>
                               </div>
                               {f.tailNumber&&<div style={{color:"#7a9ab0"}}>
-                                {f.tailNumber}{f.pax&&parseInt(f.pax)>0?` · ${f.pax} pax`:""}{f.fuelUplift>0?` · ${f.fuelUplift} gal`:""}
+                                {f.tailNumber}{f.pax&&parseInt(f.pax)>0?` · ${f.pax} pax`:""}{f.fuelUplift>0?(f.fuelUplift<4?` · ${f.fuelUplift}h fuel (avgas)`:` · ${f.fuelUplift} lbs`):""}
                               </div>}
+                              {f.delayCode&&<div style={{marginTop:2,color:SC.orange,fontSize:12,fontWeight:700}}>
+                                ⚠ Delay: {f.delayCode}
+                              </div>}
+                              {(()=>{
+                                // Departure delay vs scheduled
+                                const depDiff2 = f.schedOff&&f.startTaxi?calcMin(f.schedOff,f.startTaxi):null;
+                                if(depDiff2===null||Math.abs(depDiff2)<=1) return null;
+                                return <div style={{fontSize:12,color:depDiff2>0?SC.orange:"#6aaa8a",marginTop:1}}>
+                                  dep {depDiff2>0?`+${depDiff2}m late`:`${Math.abs(depDiff2)}m early`} vs sched {f.schedOff}
+                                </div>;
+                              })()}
                               {(()=>{const w=flightWx(f);return w?<div style={{marginTop:2,display:"flex",gap:4,alignItems:"center"}}>
                                 <WxBadge cat={w.cat} size={8}/>
                                 {w.ceiling&&<span style={{fontSize:12,color:"#7a9ab0"}}>{w.ceiling}ft</span>}
@@ -6396,6 +6407,51 @@ function computeStats(fleetData, routeAvgs) {
   const days = Object.entries(byDate).sort((a,b)=>a[0].localeCompare(b[0]));
   const dayVals = Object.values(byDate);
 
+  // ── Delay analysis ───────────────────────────────────────────────────────────
+  const delayEvents = []; // all legs with a delay code or measurable departure delay
+  const byDelayCode = {}; // code → {count, pilots:Set, routes:Set, legs:[]}
+  const byPilotDelay = {}; // pilot → {onTime, late, early, totalDelayMins, codes:{}}
+
+  all.forEach(f=>{
+    const depDelay = (f.schedOff&&f.startTaxi) ? calcMin(f.schedOff,f.startTaxi) : null;
+    const hasCode  = f.delayCode && f.delayCode.trim();
+    if(depDelay===null&&!hasCode) return; // no delay info on this leg
+
+    const pilot = f.pilotName||'?';
+    const route = `${f.origin}→${f.destination}`;
+
+    // Delay events table
+    if(hasCode||depDelay>2) {
+      delayEvents.push({
+        date:f.date, pilot, route, tail:f.tailNumber,
+        schedOff:f.schedOff, actualOff:f.startTaxi,
+        depDelay, code:f.delayCode||'', month:f.date?.slice(0,7),
+      });
+    }
+
+    // By delay code
+    if(hasCode) {
+      const code = f.delayCode.trim().toUpperCase();
+      if(!byDelayCode[code]) byDelayCode[code]={count:0,pilots:new Set(),routes:new Set(),totalDelayMins:0,legs:[]};
+      byDelayCode[code].count++;
+      byDelayCode[code].pilots.add(pilot);
+      byDelayCode[code].routes.add(route);
+      if(depDelay>0) byDelayCode[code].totalDelayMins+=depDelay;
+      byDelayCode[code].legs.push({date:f.date,pilot,route,depDelay});
+    }
+
+    // By pilot
+    if(!byPilotDelay[pilot]) byPilotDelay[pilot]={legs:0,onTime:0,late:0,early:0,totalDelayMins:0,codes:{}};
+    byPilotDelay[pilot].legs++;
+    if(depDelay===null||Math.abs(depDelay)<=2) byPilotDelay[pilot].onTime++;
+    else if(depDelay>2) { byPilotDelay[pilot].late++; byPilotDelay[pilot].totalDelayMins+=depDelay; }
+    else byPilotDelay[pilot].early++;
+    if(hasCode){
+      const code=f.delayCode.trim().toUpperCase();
+      byPilotDelay[pilot].codes[code]=(byPilotDelay[pilot].codes[code]||0)+1;
+    }
+  });
+
   // ── Pilot stats ───────────────────────────────────────────────────────────────
   const byPilot = {};
   all.forEach(f=>{
@@ -6451,6 +6507,18 @@ function computeStats(fleetData, routeAvgs) {
       .map(([tail,d])=>({tail,legs:d.legs,mins:d.mins,routes:d.routes.size,avgLegMins:Math.round(d.mins/d.legs)}))
       .sort((a,b)=>b.mins-a.mins),
     dailyLegs: days.map(([date,d])=>({date,legs:d.legs,mins:d.mins,pax:d.pax,tails:[...d.tails].length})),
+    delayEvents: delayEvents.sort((a,b)=>b.date.localeCompare(a.date)),
+    byDelayCode: Object.entries(byDelayCode)
+      .map(([code,d])=>({code,count:d.count,pilots:d.pilots.size,routes:d.routes.size,
+        avgDelay:d.totalDelayMins>0?Math.round(d.totalDelayMins/d.count):0,legs:d.legs}))
+      .sort((a,b)=>b.count-a.count),
+    byPilotDelay: Object.entries(byPilotDelay)
+      .map(([name,d])=>({name, legs:d.legs, onTime:d.onTime, late:d.late, early:d.early,
+        onTimePct:d.legs?Math.round(d.onTime/d.legs*100):100,
+        avgDelay:d.late>0?Math.round(d.totalDelayMins/d.late):0,
+        codes:d.codes}))
+      .filter(d=>d.legs>=2)
+      .sort((a,b)=>b.late-a.late),
   };
 }
 
@@ -6481,7 +6549,7 @@ function StatsScreen({ fleetData, routeAvgs }) {
   const fmtMins = m => m==null?"—":`${Math.floor(m/60)?Math.floor(m/60)+'h ':''}${m%60}m`;
   const pct = (n,t) => t ? `${(n/t*100).toFixed(0)}%` : "—";
 
-  const TABS = [["overview","OVERVIEW"],["routes","ROUTES"],["turns","TURN TIMES"],["pilots","PILOTS"],["tails","TAILS"],["daily","DAILY"]];
+  const TABS = [["overview","OVERVIEW"],["routes","ROUTES"],["turns","TURN TIMES"],["pilots","PILOTS"],["delays","DELAYS"],["tails","TAILS"],["daily","DAILY"]];
 
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
@@ -6951,6 +7019,89 @@ function StatsScreen({ fleetData, routeAvgs }) {
     </div>}
 
     {/* ── DAILY ── */}
+    {tab==="delays"&&<div>
+      {(!stats.byDelayCode?.length&&!stats.delayEvents?.length)&&<div style={{color:"#5a7a8a",padding:20,textAlign:"center"}}>
+        No delay codes found in loaded data. Delay codes are pulled from the Takeflite Flight Log Export.
+      </div>}
+      {stats.byDelayCode?.length>0&&<>
+        {/* Overall delay code summary */}
+        <div style={{fontSize:14,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:6}}>BY DELAY CODE</div>
+        <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"80px 60px 70px 70px 80px",gap:4,
+            padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:12,fontWeight:700,color:"#7a9ab8"}}>
+            <span>CODE</span><span style={{textAlign:"right"}}>COUNT</span>
+            <span style={{textAlign:"right"}}>PILOTS</span><span style={{textAlign:"right"}}>ROUTES</span>
+            <span style={{textAlign:"right"}}>AVG DELAY</span>
+          </div>
+          {stats.byDelayCode.map((d,i)=>(
+            <div key={i} style={{display:"grid",gridTemplateColumns:"80px 60px 70px 70px 80px",gap:4,
+              padding:"5px 10px",fontSize:15,borderBottom:i<stats.byDelayCode.length-1?"1px solid #0d1117":"none",
+              background:i%2===0?"#08101e":"#122030"}}>
+              <span style={{color:SC.orange,fontWeight:700}}>{d.code}</span>
+              <span style={{color:"#e0e8f0",textAlign:"right",fontWeight:700}}>{d.count}</span>
+              <span style={{color:"#7a9ab8",textAlign:"right"}}>{d.pilots}</span>
+              <span style={{color:"#7a9ab8",textAlign:"right"}}>{d.routes}</span>
+              <span style={{color:d.avgDelay>10?SC.red:d.avgDelay>5?SC.orange:"#7a9ab8",textAlign:"right"}}>
+                {d.avgDelay>0?`+${d.avgDelay}m`:"—"}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* By pilot */}
+        <div style={{fontSize:14,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:6}}>BY PILOT</div>
+        <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"140px 55px 55px 55px 70px 1fr",gap:4,
+            padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:12,fontWeight:700,color:"#7a9ab8"}}>
+            <span>PILOT</span><span style={{textAlign:"right"}}>LEGS</span>
+            <span style={{textAlign:"right"}}>LATE</span><span style={{textAlign:"right"}}>ON TIME</span>
+            <span style={{textAlign:"right"}}>AVG +MIN</span><span>TOP CODES</span>
+          </div>
+          {(stats.byPilotDelay||[]).map((d,i)=>{
+            const topCodes = Object.entries(d.codes).sort((a,b)=>b[1]-a[1]).slice(0,3);
+            return <div key={i} style={{display:"grid",gridTemplateColumns:"140px 55px 55px 55px 70px 1fr",gap:4,
+              padding:"5px 10px",fontSize:15,borderBottom:i<(stats.byPilotDelay.length-1)?"1px solid #0d1117":"none",
+              background:i%2===0?"#08101e":"#122030"}}>
+              <span style={{color:"#e0e8f0",fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
+              <span style={{color:"#7a9ab8",textAlign:"right"}}>{d.legs}</span>
+              <span style={{color:d.late>0?SC.orange:"#6aaa8a",textAlign:"right",fontWeight:700}}>{d.late}</span>
+              <span style={{color:"#6aaa8a",textAlign:"right"}}>{d.onTimePct}%</span>
+              <span style={{color:d.avgDelay>10?SC.red:d.avgDelay>5?SC.orange:"#7a9ab8",textAlign:"right"}}>
+                {d.avgDelay>0?`+${d.avgDelay}m`:"—"}
+              </span>
+              <span style={{color:"#5a7a8a",fontSize:13}}>
+                {topCodes.map(([code,n])=>`${code}×${n}`).join(" · ")||"—"}
+              </span>
+            </div>;
+          })}
+        </div>
+
+        {/* Recent delay events */}
+        <div style={{fontSize:14,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:6}}>RECENT EVENTS</div>
+        <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:"90px 130px 130px 60px 70px 60px",gap:4,
+            padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:12,fontWeight:700,color:"#7a9ab8"}}>
+            <span>DATE</span><span>PILOT</span><span>ROUTE</span>
+            <span style={{textAlign:"right"}}>SCHED</span><span style={{textAlign:"right"}}>ACTUAL</span><span style={{textAlign:"right"}}>CODE</span>
+          </div>
+          {(stats.delayEvents||[]).slice(0,50).map((d,i)=>(
+            <div key={i} style={{display:"grid",gridTemplateColumns:"90px 130px 130px 60px 70px 60px",gap:4,
+              padding:"5px 10px",fontSize:14,borderBottom:i<Math.min(49,stats.delayEvents.length-1)?"1px solid #0d1117":"none",
+              background:i%2===0?"#08101e":"#122030"}}>
+              <span style={{color:"#7a9ab8"}}>{d.date}</span>
+              <span style={{color:"#c0d0e0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.pilot}</span>
+              <span style={{color:"#7a9ab8"}}>{d.route}</span>
+              <span style={{color:"#6a8aa8",textAlign:"right"}}>{d.schedOff||"—"}</span>
+              <span style={{color:d.depDelay>5?SC.orange:d.depDelay<-2?"#6aaa8a":"#7a9ab8",textAlign:"right",fontWeight:d.depDelay>5?700:400}}>
+                {d.actualOff||"—"}{d.depDelay>2?` (+${d.depDelay}m)`:d.depDelay<-2?` (${d.depDelay}m)`:""}
+              </span>
+              <span style={{color:d.code?SC.orange:"#3a5060",textAlign:"right",fontWeight:700}}>{d.code||"—"}</span>
+            </div>
+          ))}
+        </div>
+      </>}
+    </div>}
+
     {tab==="daily"&&<div>
       <div style={{fontSize:14,color:"#6a8aa8",marginBottom:10}}>{stats.dailyLegs.length} operating days</div>
       <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
