@@ -4408,34 +4408,55 @@ const REGS = [
   },
   {
     id: "135.267",
-    title: "§135.267 — Flight Time Limits (On-Demand)",
-    applies: "On-demand / charter operations",
+    title: "§135.267 — Flight Time Limits (On-Demand/Unscheduled)",
+    applies: "Unscheduled one- and two-pilot crews (on-demand / charter)",
     color: "#ff9f43",
     sections: [
       {
-        heading: "Maximum Flight Hours",
+        heading: "§(a) Maximum Flight Hours — Cumulative",
         rules: [
-          { label: "In any 24 consecutive hours", limit: "8 hours", warn: "7 hours", note: "Rolling — measured 24 hrs back from current block-off, not calendar day" },
-          { label: "Per calendar month",          limit: "100 hours",warn: "90 hours", note: "" },
-          { label: "Per calendar quarter",        limit: "500 hours",warn: "450 hours", note: "" },
-          { label: "Per calendar year",           limit: "1,400 hours",warn:"1,260 hours", note: "" },
+          { label: "Per calendar quarter",              limit: "500 hours",   warn: "450 hours", note: "§(a)(1) — Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec" },
+          { label: "Any two consecutive quarters",      limit: "800 hours",   warn: "720 hours", note: "§(a)(2) — Rolling two-quarter window" },
+          { label: "Per calendar year",                 limit: "1,400 hours", warn: "1,260 hours", note: "§(a)(3) — Jan 1–Dec 31" },
         ]
       },
       {
-        heading: "Rest Requirements",
+        heading: "§(b) Daily Flight Time — 24 Consecutive Hours",
         rules: [
-          { label: "Minimum rest",                     limit: "9 hours",  warn: "", note: "9 consecutive hours free from all duty" },
-          { label: "After hitting 8-hr flight limit",  limit: "10 hours", warn: "", note: "Must have 10 hrs rest before next flight duty" },
-          { label: "Extended rest exception",          limit: "10 hours", warn: "", note: "Can extend duty period if crew gets 10-hr rest afterward" },
+          { label: "Single pilot",   limit: "8 hours", warn: "7 hours", note: "§(b)(1) — Rolling 24 hrs, all commercial flying combined" },
+          { label: "Two pilots",     limit: "10 hours", warn: "9 hours", note: "§(b)(2) — Both pilots must be qualified for the operation" },
         ]
       },
       {
-        heading: "Duty Period",
+        heading: "§(c) Extended Duty Exception",
         rules: [
-          { label: "Maximum duty period",     limit: "14 hours", warn: "11 hours", note: "Same as scheduled — 14 hrs max including all work" },
-          { label: "Rest after long duty",    limit: "10 hours", warn: "",         note: "After any duty period >8 hrs, 10-hr rest required" },
+          { label: "Max duty period under exception", limit: "14 hours", warn: "12 hours", note: "§(c) — Allowed if preceded AND followed by 10-hr rest" },
+          { label: "Rest required before",            limit: "10 hours", warn: "", note: "§(c)(1) — Must immediately precede the extended duty" },
+          { label: "Rest required after",             limit: "10 hours", warn: "", note: "§(c)(1) — Must immediately follow the extended duty" },
+          { label: "Flight time limit still applies", limit: "8 hrs (single) / 10 hrs (two-pilot)", warn: "", note: "§(c)(2) — The extended duty doesn't increase the flight time cap" },
+          { label: "Duty + rest must equal",          limit: "24 hours", warn: "", note: "§(c)(3) — Combined duty period and rest period must total 24 hrs" },
         ]
-      }
+      },
+      {
+        heading: "§(d) Rest Before Assignment",
+        rules: [
+          { label: "Rest before planned completion of assignment", limit: "10 hours", warn: "", note: "§(d) — Each §(b) assignment must provide 10 consecutive rest hours in the preceding 24-hr period" },
+        ]
+      },
+      {
+        heading: "§(e) Excess Flight Time — Extended Rest Required",
+        rules: [
+          { label: "Exceeded by ≤30 min (circumstances beyond control)", limit: "11 hrs rest", warn: "", note: "§(e)(1) — e.g. adverse weather diversion" },
+          { label: "Exceeded by 31–60 min",                              limit: "12 hrs rest", warn: "", note: "§(e)(2)" },
+          { label: "Exceeded by >60 min",                                limit: "16 hrs rest", warn: "", note: "§(e)(3)" },
+        ]
+      },
+      {
+        heading: "§(f) Quarterly Rest Periods",
+        rules: [
+          { label: "24-hour rest periods per calendar quarter", limit: "13 periods", warn: "", note: "§(f) — Each crewmember must receive at least 13 rest periods of 24 consecutive hours each quarter" },
+        ]
+      },
     ]
   },
   {
