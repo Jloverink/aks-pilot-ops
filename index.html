@@ -2936,7 +2936,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   const now2=clockMs;
                   const win2=now2-24*3600000;
                   const wallSec2=Math.floor(now2/1000)%60;
-                  const downSec2=59-wallSec2;
+                  const downSec2=(60-wallSec2)%60;
 
                   // Yesterday: live intersection countdown
                   let yMins2=0, windowInYest2=false;
@@ -3050,7 +3050,7 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                   // tick at 1s/s so they share the same wallSec.
                   const yestH = Math.floor(yesterdayMins/60);
                   const yestM = yesterdayMins%60;
-                  const downSec = 59 - wallSec; // YEST LEFT counts DOWN
+                  const downSec = (60 - wallSec) % 60; // YEST LEFT counts DOWN, syncs at :00
                   const yesterdayDisplay = windowInsideYestBlock
                     ? `${yestH>0?yestH+':':''}${String(yestM).padStart(yestH>0?2:1,'0')}:${String(downSec).padStart(2,'0')}`
                     : fmtMin(yesterdayMins);
@@ -3777,11 +3777,16 @@ End: ${endReason}`;
                                 ⚠ Delay: {f.delayCode}
                               </div>}
                               {(()=>{
-                                // Departure delay vs scheduled
                                 const depDiff2 = f.schedOff&&f.startTaxi?calcMin(f.schedOff,f.startTaxi):null;
-                                if(depDiff2===null||Math.abs(depDiff2)<=1) return null;
-                                return <div style={{fontSize:12,color:depDiff2>0?SC.orange:"#6aaa8a",marginTop:1}}>
-                                  dep {depDiff2>0?`+${depDiff2}m late`:`${Math.abs(depDiff2)}m early`} vs sched {f.schedOff}
+                                const arrDiff2 = f.schedOn&&f.stopTaxi&&f._status==="completed"?calcMin(f.schedOn,f.stopTaxi):null;
+                                if((depDiff2===null||Math.abs(depDiff2)<=1)&&(arrDiff2===null||Math.abs(arrDiff2)<=1)) return null;
+                                return <div style={{fontSize:12,marginTop:1,display:"flex",flexDirection:"column",gap:1}}>
+                                  {depDiff2!==null&&Math.abs(depDiff2)>1&&<span style={{color:depDiff2>0?SC.orange:"#6aaa8a"}}>
+                                    dep {depDiff2>0?`+${depDiff2}m late`:`${Math.abs(depDiff2)}m early`} vs sched {f.schedOff}
+                                  </span>}
+                                  {arrDiff2!==null&&Math.abs(arrDiff2)>1&&<span style={{color:arrDiff2>0?SC.orange:"#6aaa8a"}}>
+                                    arr {arrDiff2>0?`+${arrDiff2}m late`:`${Math.abs(arrDiff2)}m early`} vs sched {f.schedOn}
+                                  </span>}
                                 </div>;
                               })()}
                               {(()=>{const w=flightWx(f);return w?<div style={{marginTop:2,display:"flex",gap:4,alignItems:"center"}}>
