@@ -3081,22 +3081,30 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
                     }
                   }
 
-                  // Scheduled flights whose window has started but log not yet uploaded:
-                  // if schedOff <= now < schedOff+schedDur, treat as "in block" estimate
-                  if(!nowInsideTodayBlock){
-                    for(const f of (c.todayFlights||[])){
-                      if(f._status!=='scheduled'||!f.schedOff||!f._schedDurMins) continue;
-                      const offMs = new Date(todayStr+'T'+f.schedOff+':00').getTime();
-                      const etaMs = offMs + f._schedDurMins*60000;
-                      if(now >= offMs && now < etaMs){
+                  // Scheduled flights: two cases handled separately
+                  // Case 1: schedOff <= now < ETA — currently "in block", tick live
+                  // Case 2: ETA already passed — count full scheduled duration (no log yet)
+                  // Both cases only apply when no actual en-route data exists for that leg
+                  let pastSchedMins = 0; // completed scheduled legs with no actual data
+                  for(const f of (c.todayFlights||[])){
+                    if(f._status!=='scheduled'||!f.schedOff||!f._schedDurMins) continue;
+                    const offMs = new Date(todayStr+'T'+f.schedOff+':00').getTime();
+                    const etaMs = offMs + f._schedDurMins*60000;
+                    if(now >= offMs && now < etaMs){
+                      // Currently in this block — tick live (only if not already tracking an enroute)
+                      if(!nowInsideTodayBlock){
                         nowInsideTodayBlock = true;
                         activeElapsedMins  += (now - offMs)/60000;
                       }
+                    } else if(now >= etaMs){
+                      // Leg window has fully passed — count full scheduled duration
+                      // This is the "should have landed by now" estimate
+                      pastSchedMins += f._schedDurMins;
                     }
                   }
 
-                  // TODAY = completed mins + live elapsed on active flight (capped at block end)
-                  const todayFlyingMins = Math.floor(todayCompMins + activeElapsedMins);
+                  // TODAY = completed actual + past-scheduled estimates + live elapsed on active
+                  const todayFlyingMins = Math.floor(todayCompMins + pastSchedMins + activeElapsedMins);
 
                   // ── Is NOW inside a yesterday-window erasure period? ───────────
                   // Erasing = the windowStartMs is currently sweeping through yesterday flights
