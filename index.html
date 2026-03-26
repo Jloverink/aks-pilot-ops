@@ -3925,12 +3925,36 @@ End: ${endReason}`;
                     <div style={{fontSize:14,fontWeight:700,color:SC.orange,
                       letterSpacing:"0.08em",marginBottom:5}}>⚠ TIGHT TURNS</div>
                     {warnings.map((w,i)=>(
-                      <div key={i} style={{display:"flex",justifyContent:"space-between",
-                        fontSize:15,padding:"2px 0",borderBottom:i<warnings.length-1?"1px solid rgba(255,109,0,0.1)":"none"}}>
-                        <span style={{color:"#c0c0a0"}}>{w.at} — {w.between}</span>
-                        <span style={{color:w.turn<5?SC.red:SC.orange,fontWeight:700}}>
-                          {w.turn}m turn ({w.landTime}→{w.depTime})
-                        </span>
+                      <div key={i} style={{padding:"5px 0",borderBottom:i<warnings.length-1?"1px solid rgba(255,109,0,0.1)":"none"}}>
+                        {/* Main row */}
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:2}}>
+                          <span style={{color:"#c0c0a0",fontSize:15}}>
+                            {w.at} — {w.between}
+                            {w.isTomorrow&&<span style={{fontSize:12,color:"#5a7a8a",marginLeft:6}}>tomorrow</span>}
+                          </span>
+                          <span style={{color:w.turn<5?SC.red:SC.orange,fontWeight:700,fontSize:15,flexShrink:0,marginLeft:12}}>
+                            {w.turn}m turn ({w.landTime}→{w.depTime})
+                          </span>
+                        </div>
+                        {/* Context row */}
+                        <div style={{fontSize:13,color:"#7a8a6a",display:"flex",gap:12,flexWrap:"wrap"}}>
+                          {w.lateBy!==null&&w.lateBy>1&&<span style={{color:w.lateBy>5?"#ff9944":"#a0a060"}}>
+                            inbound {w.lateBy}m late (landed {w.landTime}, sched {w.schedOn||"—"})
+                          </span>}
+                          {w.lateBy!==null&&w.lateBy<=0&&<span style={{color:"#6a9a6a"}}>
+                            inbound on time
+                          </span>}
+                          {w.schedTurn!==null&&<span style={{color:w.schedTurn<15?"#ff9944":"#7a9a6a"}}>
+                            sched turn: {w.schedTurn}m
+                          </span>}
+                          {w.depLateBy!==null&&w.depLateBy>1&&<span style={{color:"#a08050"}}>
+                            outbound +{w.depLateBy}m vs sched
+                          </span>}
+                          {w.depLateBy!==null&&w.depLateBy<-1&&<span style={{color:"#6a9a6a"}}>
+                            outbound {Math.abs(w.depLateBy)}m early
+                          </span>}
+                          {!w.isActive&&!w.isTomorrow&&<span style={{color:"#5a7a8a"}}>scheduled — not yet flown</span>}
+                        </div>
                       </div>
                     ))}
                   </div>;
@@ -6963,22 +6987,37 @@ function useWeather(intervalMs=300000) { // refresh every 5 min
 
 // ── TURN TIME WARNINGS ────────────────────────────────────────────────────────
 function getTurnWarnings(flights, minTurnMins=15) {
-  // Given a sorted list of today's/tomorrow's flights for one pilot,
-  // find consecutive legs at the same station with < minTurnMins ground time
   const warnings = [];
   const sorted = [...flights].filter(f=>f.startTaxi||f.schedOff)
     .sort((a,b)=>(a.startTaxi||a.schedOff||'').localeCompare(b.startTaxi||b.schedOff||''));
   for(let i=0;i<sorted.length-1;i++){
     const a=sorted[i], b=sorted[i+1];
     if(a.destination!==b.origin) continue;
-    const aLand = a.stopTaxi||a.schedOn||(a.startTaxi?addMinToTime(a.startTaxi,a.totalMinutes||30):null);
-    const bDep  = b.startTaxi||b.schedOff||'';
+    const aLand    = a.stopTaxi||a.schedOn||(a.startTaxi?addMinToTime(a.startTaxi,a.totalMinutes||30):null);
+    const bDep     = b.startTaxi||b.schedOff||'';
     if(!aLand||!bDep) continue;
     const turn = calcMin(aLand, bDep);
     if(turn!==null && turn>=0 && turn<minTurnMins) {
+      // Was the inbound leg late? Compare actual land vs scheduled land
+      const schedLand   = a.schedOn||null;
+      const actualLand  = a.stopTaxi||null;
+      const lateBy      = (schedLand&&actualLand) ? calcMin(schedLand,actualLand) : null;
+      // Was the outbound scheduled turn tight even if on time?
+      const schedTurn   = (schedLand&&b.schedOff) ? calcMin(schedLand,b.schedOff) : null;
+      // Was outbound departure early / late?
+      const schedDep    = b.schedOff||null;
+      const actualDep   = b.startTaxi||null;
+      const depLateBy   = (schedDep&&actualDep) ? calcMin(schedDep,actualDep) : null;
+      // Status: is this an active (in progress) or upcoming flight?
+      const isActive    = a._status==='completed'||a._status==='enroute';
+      const isTomorrow  = a.date > (new Date().toISOString().slice(0,10));
       warnings.push({
-        at: a.destination, turn, between: `${a.origin}→${a.destination} & ${b.origin}→${b.destination}`,
+        at: a.destination, turn, between: `${a.origin}\u2192${a.destination} & ${b.origin}\u2192${b.destination}`,
         landTime: aLand, depTime: bDep,
+        lateBy, schedTurn, depLateBy, isActive, isTomorrow,
+        inboundRoute: `${a.origin}\u2192${a.destination}`,
+        outboundRoute: `${b.origin}\u2192${b.destination}`,
+        date: a.date,
       });
     }
   }
