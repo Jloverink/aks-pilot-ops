@@ -619,6 +619,54 @@ function computeHistoryStats(pilotFlights) {
     };
   });
 
+  // Route pairs (origin→dest)
+  const byRoute = {};
+  comp.forEach(f => {
+    if(!f.origin&&!f.destination) return;
+    const orig = f.origin||'?'; const dest = f.destination||'?';
+    const key  = `${orig}→${dest}`;
+    if(!byRoute[key]) byRoute[key]={route:key,orig,dest,legs:0,mins:0,pax:0,pilotsArr:[]};
+    byRoute[key].legs++; byRoute[key].mins+=f.totalMinutes||0; byRoute[key].pax+=parseInt(f.pax)||0;
+    if(!byRoute[key].pilotsArr.includes(f._pilot)) byRoute[key].pilotsArr.push(f._pilot);
+  });
+  const routeStats = Object.values(byRoute)
+    .map(d=>({...d,pilotCount:d.pilotsArr.length,pilotsArr:undefined}))
+    .sort((a,b)=>b.legs-a.legs).slice(0,60);
+
+  // Enrich byPilot with year-by-year and route breakdown
+  Object.entries(pilotFlights).forEach(([pilot,flights])=>{
+    if(!byPilot[pilot]) return;
+    const pComp = flights.filter(f=>!f._isCoPilot&&(f._status==='completed'||f.totalMinutes>0)&&f.totalMinutes>0);
+    const pilotByYear={};
+    pComp.forEach(f=>{
+      const y=f.date?.slice(0,4); if(!y) return;
+      if(!pilotByYear[y]) pilotByYear[y]={legs:0,mins:0,pax:0};
+      pilotByYear[y].legs++; pilotByYear[y].mins+=f.totalMinutes||0; pilotByYear[y].pax+=parseInt(f.pax)||0;
+    });
+    const routeFreq={};
+    pComp.forEach(f=>{
+      if(!f.origin&&!f.destination) return;
+      const r=`${f.origin||'?'}→${f.destination||'?'}`;
+      if(!routeFreq[r]) routeFreq[r]={route:r,legs:0,pax:0};
+      routeFreq[r].legs++; routeFreq[r].pax+=parseInt(f.pax)||0;
+    });
+    byPilot[pilot].byYear = pilotByYear;
+    byPilot[pilot].topRoutes = Object.values(routeFreq).sort((a,b)=>b.legs-a.legs).slice(0,10);
+  });
+
+  // Pre-compute records for instant display
+  const pilotArr = Object.values(byPilot);
+  const records = {
+    mostLegs:    [...pilotArr].sort((a,b)=>b.totalLegs-a.totalLegs).slice(0,10).map(p=>({name:p.fullName,username:p.username,value:p.totalLegs,sub:`${(p.totalMins/60).toFixed(0)}h`})),
+    mostHours:   [...pilotArr].sort((a,b)=>b.totalMins-a.totalMins).slice(0,10).map(p=>({name:p.fullName,username:p.username,value:Math.round(p.totalMins/60),sub:`${p.totalLegs.toLocaleString()} legs`})),
+    mostPax:     [...pilotArr].sort((a,b)=>b.totalPax-a.totalPax).slice(0,10).map(p=>({name:p.fullName,username:p.username,value:p.totalPax,sub:`${p.totalLegs.toLocaleString()} legs`})),
+    topRouteLegs:routeStats.slice(0,10).map(r=>({name:r.route,value:r.legs,sub:`${r.pax.toLocaleString()} pax`})),
+    topRoutePax: [...routeStats].sort((a,b)=>b.pax-a.pax).slice(0,10).map(r=>({name:r.route,value:r.pax,sub:`${r.legs.toLocaleString()} legs`})),
+    busyDays:    topDaysByLegs.slice(0,10).map(d=>({name:d.date,value:d.legs,sub:`${d.pax} pax · ${d.pilots} pilots`})),
+    paxDays:     topDaysByPax.slice(0,10).map(d=>({name:d.date,value:d.pax,sub:`${d.legs} legs · ${d.pilots} pilots`})),
+    topTails:    tailStats.slice(0,10).map(t=>({name:t.tail,value:t.legs,sub:`${Math.round(t.mins/60).toLocaleString()}h`})),
+  };
+
   const allDatesAll = comp.map(f=>f.date).filter(Boolean).sort();
   return {
     generated: new Date().toISOString(),
@@ -626,7 +674,7 @@ function computeHistoryStats(pilotFlights) {
     uniquePilots: Object.keys(byPilot).length,
     dateRange: {start:allDatesAll[0], end:allDatesAll[allDatesAll.length-1]},
     byYear, byMonth, topDaysByLegs, topDaysByPax,
-    destStats, tailStats, byPilot,
+    destStats, routeStats, tailStats, byPilot, records,
   };
 }
 // ── SUPABASE STORAGE ──────────────────────────────────────────────────────────
@@ -8862,144 +8910,181 @@ function WarnPopup({flights,profile,onDismiss}) {
 
 // ── LEGACY SCREEN ─────────────────────────────────────────────────────────────
 function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
-  const [tab, setTab] = useState("overview");
-  const [pilotSearch, setPilotSearch] = useState("");
+  const [tab, setTab]               = useState("overview");
+  const [pilotSearch, setPilotSearch]= useState("");
   const [showAlumni, setShowAlumni] = useState(false);
-  const [pilotSort, setPilotSort] = useState("legs");
-  const [rebuilding, setRebuilding] = useState(false);
+  const [pilotSort, setPilotSort]   = useState("hours");
+  const [selectedPilot, setSelectedPilot] = useState(null);
+  const [hoveredYear, setHoveredYear]     = useState(null);
+  const [rebuilding, setRebuilding]       = useState(false);
   const [rebuildStatus, setRebuildStatus] = useState(null);
+  const [recordsTab, setRecordsTab]       = useState("pilots");
+  const [routeSearch, setRouteSearch]     = useState("");
+
+  const fmtH  = m  => m  ? `${(m/60).toFixed(1)}h`     : "—";
+  const fmtHi = m  => m  ? `${Math.round(m/60).toLocaleString()}h` : "—";
+  const fmtK  = n  => n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(n||0);
+  const MONTHS= ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const TODAY = new Date().toISOString().slice(0,10);
 
   const rebuildFromSupabase = async () => {
     setRebuilding(true); setRebuildStatus("Fetching rows from Supabase...");
     try {
-      // Fetch all rows from aks_flights using Range header pagination (1000 rows/page)
-      // Supabase PostgREST caps at 1000 rows per request regardless of limit param
-      const PAGE = 1000;
-      let allRows = [], offset = 0, done = false;
+      const PAGE = 1000; let allRows = [], offset = 0, done = false;
       while(!done) {
         const url = `${SUPA_URL}/rest/v1/aks_flights?apikey=${SUPA_KEY}&select=pilot,date,tail,origin,destination,flight_type,status,start_time,stop_time,sched_off,sched_on,block_mins,pax,landings,vfr_ifr,delay_code,fuel_uplift,is_ioe&order=date.asc`;
-        const res = await fetch(url, {headers:{
-          "Authorization":`Bearer ${SUPA_KEY}`,
-          "Content-Type":"application/json",
-          "Range":`${offset}-${offset+PAGE-1}`,
-          "Prefer":"count=exact",
-        }});
-        if(!res.ok && res.status !== 206) throw new Error(`Supabase fetch failed: ${res.status}`);
+        const res = await fetch(url, {headers:{"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json","Range":`${offset}-${offset+PAGE-1}`,"Prefer":"count=exact"}});
+        if(!res.ok && res.status!==206) throw new Error(`Supabase fetch failed: ${res.status}`);
         const rows = await res.json();
         allRows = allRows.concat(rows);
-        // Parse total from Content-Range header (e.g. "0-999/52700")
-        const cr = res.headers.get('content-range');
-        const total = cr ? parseInt(cr.split('/')[1])||0 : 0;
-        setRebuildStatus(`Fetched ${allRows.length.toLocaleString()}${total?` of ${total.toLocaleString()}`:''}  rows...`);
-        if(rows.length < PAGE) done = true;
-        else offset += PAGE;
+        const cr=res.headers.get('content-range'), total=cr?parseInt(cr.split('/')[1])||0:0;
+        setRebuildStatus(`Fetched ${allRows.length.toLocaleString()}${total?` of ${total.toLocaleString()}`:""}...`);
+        if(rows.length < PAGE) done = true; else offset += PAGE;
       }
       setRebuildStatus(`Computing stats from ${allRows.length.toLocaleString()} rows...`);
-      // Convert aks_flights rows back to pilotFlights format
       const pilotFlights = {};
-      await new Promise(resolve => setTimeout(resolve, 50)); // yield to UI
-      allRows.forEach(r => {
-        const pilot = r.pilot; if(!pilot) return;
-        if(!pilotFlights[pilot]) pilotFlights[pilot] = [];
+      await new Promise(r=>setTimeout(r,50));
+      allRows.forEach(r=>{
+        const pilot=r.pilot; if(!pilot) return;
+        if(!pilotFlights[pilot]) pilotFlights[pilot]=[];
         pilotFlights[pilot].push({
-          date: r.date, tailNumber: r.tail, origin: r.origin, destination: r.destination,
-          trainingType: r.flight_type||'', _status: r.status==='completed'?'completed':r.block_mins>0?'completed':(r.status||'scheduled'),
-          startTaxi: r.start_time||'', stopTaxi: r.stop_time||'',
-          schedOff: r.sched_off||'', schedOn: r.sched_on||'',
-          totalMinutes: r.block_mins||0, pax: String(r.pax||0),
-          landings: r.landings||1, flightRules: r.vfr_ifr||'VFR',
-          delayCode: r.delay_code||'', fuelUplift: r.fuel_uplift||0,
-          _isIOE: r.is_ioe||false, notes: '',
+          date:r.date, tailNumber:r.tail, origin:r.origin, destination:r.destination,
+          trainingType:r.flight_type||'',
+          _status: r.status==='completed'?'completed':r.block_mins>0?'completed':(r.status||'scheduled'),
+          startTaxi:r.start_time||'', stopTaxi:r.stop_time||'',
+          schedOff:r.sched_off||'', schedOn:r.sched_on||'',
+          totalMinutes:r.block_mins||0, pax:String(r.pax||0),
+          landings:r.landings||1, flightRules:r.vfr_ifr||'VFR',
+          delayCode:r.delay_code||'', fuelUplift:r.fuel_uplift||0, _isIOE:r.is_ioe||false,
         });
       });
-      setRebuildStatus('Saving stats...');
-      await new Promise(resolve => setTimeout(resolve, 50));
+      setRebuildStatus("Saving stats...");
+      await new Promise(r=>setTimeout(r,50));
       await onRebuildStats(pilotFlights);
       setRebuildStatus(`✓ Done — ${allRows.length.toLocaleString()} rows, ${Object.keys(pilotFlights).length} pilots`);
-    } catch(e) {
-      setRebuildStatus(`✗ Error: ${e.message}`);
-    }
+    } catch(e) { setRebuildStatus(`✗ Error: ${e.message}`); }
     setRebuilding(false);
   };
 
-  const fmtH = m => m ? `${(m/60).toFixed(1)}h` : "—";
-  const fmtK = n => n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(n);
-  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const TODAY = new Date().toISOString().slice(0,10);
-
   if(historyProgress) return (
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-      height:"60vh",gap:16}}>
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"60vh",gap:16}}>
       <div style={{fontSize:16,color:"#4a9eff",fontWeight:700}}>📡 SAVING TO SUPABASE</div>
       <div style={{width:300,height:8,background:"#1e2730",borderRadius:4,overflow:"hidden"}}>
-        <div style={{height:"100%",background:"#4a9eff",borderRadius:4,
-          width:`${Math.round(historyProgress.done/historyProgress.total*100)}%`,transition:"width 0.3s"}}/>
+        <div style={{height:"100%",background:"#4a9eff",borderRadius:4,width:`${Math.round(historyProgress.done/historyProgress.total*100)}%`,transition:"width 0.3s"}}/>
       </div>
-      <div style={{fontSize:14,color:"#7a9ab8"}}>
-        {historyProgress.done.toLocaleString()} / {historyProgress.total.toLocaleString()} rows
-      </div>
+      <div style={{fontSize:14,color:"#7a9ab8"}}>{historyProgress.done.toLocaleString()} / {historyProgress.total.toLocaleString()} rows</div>
     </div>
   );
 
   if(!historyStats) return (
     <div style={{padding:24,textAlign:"center",color:"#5a7a8a"}}>
       <div style={{fontSize:20,marginBottom:8}}>🗂 NO HISTORY DATA</div>
-      <div style={{fontSize:14,marginBottom:16}}>Upload flight logs on the IMPORT screen, or rebuild from Supabase if you've already uploaded.</div>
+      <div style={{fontSize:14,marginBottom:16,lineHeight:1.6}}>Upload flight logs on the IMPORT screen, or rebuild from Supabase.</div>
       <button onClick={rebuildFromSupabase} disabled={rebuilding}
         style={{padding:"10px 20px",background:"rgba(74,158,255,0.15)",border:"1px solid rgba(74,158,255,0.4)",
-        borderRadius:6,color:"#4a9eff",fontSize:14,fontWeight:700,cursor:rebuilding?"default":"pointer",
-        fontFamily:"'JetBrains Mono',monospace"}}>
+        borderRadius:6,color:"#4a9eff",fontSize:14,fontWeight:700,cursor:rebuilding?"default":"pointer",fontFamily:"'JetBrains Mono',monospace"}}>
         {rebuilding?rebuildStatus:"📡 REBUILD FROM SUPABASE"}
       </button>
-      <div style={{fontSize:14,lineHeight:1.6}}>
-        Upload flight log exports on the IMPORT screen.<br/>
-        After import, career stats and location history will appear here.
-      </div>
     </div>
   );
 
-  const TABS = [["overview","OVERVIEW"],["pilots","PILOTS"],["locations","LOCATIONS"],["fleet","FLEET"]];
+  const TABS=[["overview","OVERVIEW"],["records","RECORDS"],["pilots","PILOTS"],["routes","ROUTES"],["fleet","FLEET"]];
+  const allPilots   = Object.values(historyStats.byPilot||{});
+  const sortKey     = pilotSort==="hours"?"totalMins":pilotSort==="pax"?"totalPax":"totalLegs";
+  const activePilots= allPilots.filter(p=>(p.daysSince||9999)<90).sort((a,b)=>b[sortKey]-a[sortKey]);
+  const alumni      = allPilots.filter(p=>(p.daysSince||9999)>=90).sort((a,b)=>(b.lastFlight||"").localeCompare(a.lastFlight||""));
+  const filtActive  = activePilots.filter(p=>!pilotSearch||p.fullName.toLowerCase().includes(pilotSearch.toLowerCase())||p.username.includes(pilotSearch.toLowerCase()));
+  const filtAlumni  = alumni.filter(p=>!pilotSearch||p.fullName.toLowerCase().includes(pilotSearch.toLowerCase())||p.username.includes(pilotSearch.toLowerCase()));
+  const maxYearLegs = Math.max(...Object.values(historyStats.byYear||{}).map(d=>d.legs),1);
+  const maxMonthLegs= Math.max(...(historyStats.byMonth||[]).map(d=>d.legs),1);
+  const filtRoutes  = (historyStats.routeStats||[]).filter(r=>!routeSearch||r.route.toLowerCase().includes(routeSearch.toLowerCase()));
 
-  const allPilots = Object.values(historyStats.byPilot||{});
-  const activePilots = allPilots.filter(p => (p.daysSince||9999) < 90).sort((a,b)=>b[pilotSort==="legs"?'totalLegs':pilotSort==="hours"?'totalMins':'totalPax']-a[pilotSort==="legs"?'totalLegs':pilotSort==="hours"?'totalMins':'totalPax']);
-  const alumni = allPilots.filter(p => (p.daysSince||9999) >= 90).sort((a,b)=>(b.lastFlight||'').localeCompare(a.lastFlight||''));
-  const filteredActive = activePilots.filter(p => !pilotSearch || p.fullName.toLowerCase().includes(pilotSearch.toLowerCase()) || p.username.includes(pilotSearch.toLowerCase()));
-  const filteredAlumni = alumni.filter(p => !pilotSearch || p.fullName.toLowerCase().includes(pilotSearch.toLowerCase()) || p.username.includes(pilotSearch.toLowerCase()));
-
-  const maxYearLegs = Math.max(...Object.values(historyStats.byYear||{}).map(d=>d.legs), 1);
-  const maxMonthLegs = Math.max(...(historyStats.byMonth||[]).map(d=>d.legs), 1);
-
-  const AKS_PRIMARY = ["JNU","HNH","HNS","SGY","SIT","KTN","PSG","WRG","KAE","KLW","CGA","HYD","AGN","GST","YAK","PEL","ELV","TKE","PTH","FNR","HKB","KXA"];
-  const AKS_SPECIAL = ["PACK","NORR","PYBU","WATE","EXCU"];
-
-  const SC = {red:"#ff4757",orange:"#ff6d00",green:"#5aaa8a",blue:"#4a9eff"};
+  // ── Pilot modal ─────────────────────────────────────────────────────────────
+  const PilotModal = ({p}) => {
+    const maxYrLegs = Math.max(...Object.values(p.byYear||{}).map(d=>d.legs),1);
+    return <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.85)",
+      zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onClick={()=>setSelectedPilot(null)}>
+      <div style={{background:"#0a0e14",border:"1px solid #2a3a4a",borderRadius:10,padding:20,
+        maxWidth:520,width:"100%",maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+          <div>
+            <div style={{fontSize:20,fontWeight:700,color:"#e0e8f0"}}>{p.fullName}</div>
+            <div style={{fontSize:12,color:"#4a9eff"}}>{p.username} · {p.years?.[0]}–{p.years?.[p.years.length-1]} · {p.years?.length||0} years</div>
+          </div>
+          <button onClick={()=>setSelectedPilot(null)} style={{background:"none",border:"none",color:"#5a7a8a",fontSize:22,cursor:"pointer",lineHeight:1}}>×</button>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+          {[{l:"LEGS",v:p.totalLegs?.toLocaleString(),c:"#4a9eff"},{l:"HOURS",v:fmtHi(p.totalMins),c:"#00b894"},{l:"PAX",v:p.totalPax?.toLocaleString(),c:"#ffd740"}].map(s=>(
+            <div key={s.l} style={{background:"#060a0f",borderRadius:6,padding:"8px 10px",textAlign:"center"}}>
+              <div style={{fontSize:10,color:"#4a5a6a",marginBottom:2}}>{s.l}</div>
+              <div style={{fontSize:20,fontWeight:700,color:s.c}}>{s.v}</div>
+            </div>
+          ))}
+        </div>
+        {p.byYear&&Object.keys(p.byYear).length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>YEAR BY YEAR</div>
+          <div style={{background:"#060a0f",borderRadius:6,padding:"8px 10px",marginBottom:12}}>
+            {Object.entries(p.byYear).sort((a,b)=>a[0].localeCompare(b[0])).map(([y,d])=>(
+              <div key={y} style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                <span style={{width:32,fontSize:11,color:"#5a7a8a"}}>{y}</span>
+                <div style={{flex:1,height:10,background:"#1e2730",borderRadius:2,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:`${d.legs/maxYrLegs*100}%`,background:"#4a9eff44",borderRadius:2}}/>
+                </div>
+                <span style={{width:40,fontSize:11,color:"#9abacb",textAlign:"right"}}>{d.legs}</span>
+                <span style={{width:44,fontSize:11,color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
+                <span style={{width:38,fontSize:11,color:"#5a7a8a",textAlign:"right"}}>{fmtK(d.pax)}p</span>
+              </div>
+            ))}
+          </div>
+        </>}
+        {p.topRoutes?.length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>TOP ROUTES</div>
+          <div style={{background:"#060a0f",borderRadius:6,padding:"8px 10px",marginBottom:12}}>
+            {p.topRoutes.slice(0,8).map((r,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",
+                borderBottom:i<7?"1px solid #0d1520":"none",fontSize:13}}>
+                <span style={{color:"#9abacb",fontFamily:"monospace"}}>{r.route}</span>
+                <span style={{color:"#4a9eff"}}>{r.legs} legs</span>
+                <span style={{color:"#ffd740"}}>{r.pax} pax</span>
+              </div>
+            ))}
+          </div>
+        </>}
+        {Object.keys(p.byType||{}).filter(t=>t!=='UNK').length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>AIRCRAFT TYPE</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {Object.entries(p.byType||{}).filter(([t])=>t!=='UNK').sort((a,b)=>b[1]-a[1]).map(([t,m])=>(
+              <div key={t} style={{background:"#060a0f",borderRadius:5,padding:"6px 10px",textAlign:"center"}}>
+                <div style={{fontSize:10,color:"#4a5a6a"}}>{TAIL_LABEL[t]||t}</div>
+                <div style={{fontSize:15,fontWeight:700,color:"#00b894"}}>{fmtH(m)}</div>
+              </div>
+            ))}
+          </div>
+        </>}
+      </div>
+    </div>;
+  };
 
   return <div style={{padding:"12px 14px 100px"}}>
-    {/* Rebuild from Supabase */}
+    {selectedPilot&&<PilotModal p={selectedPilot}/>}
+
+    {/* Rebuild button */}
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
       <button onClick={rebuildFromSupabase} disabled={rebuilding}
-        style={{padding:"6px 14px",background:rebuilding?"#0a1018":"rgba(74,158,255,0.1)",
-        border:"1px solid rgba(74,158,255,0.3)",borderRadius:5,color:rebuilding?"#4a6070":"#4a9eff",
-        fontSize:12,fontWeight:700,cursor:rebuilding?"default":"pointer",
-        fontFamily:"'JetBrains Mono',monospace"}}>
+        style={{padding:"5px 12px",background:rebuilding?"#0a1018":"rgba(74,158,255,0.1)",border:"1px solid rgba(74,158,255,0.3)",
+        borderRadius:5,color:rebuilding?"#4a6070":"#4a9eff",fontSize:11,fontWeight:700,cursor:rebuilding?"default":"pointer",fontFamily:"'JetBrains Mono',monospace"}}>
         {rebuilding?"⏳ "+rebuildStatus:"📡 REBUILD FROM SUPABASE"}
       </button>
-      <span style={{fontSize:11,color:"#3a5060"}}>
-        (use IMPORT → Bulk Import for most accurate stats)
-      </span>
-      {rebuildStatus&&!rebuilding&&<span style={{fontSize:12,color:rebuildStatus.startsWith("✓")?"#00b894":"#ff4757"}}>
-        {rebuildStatus}
-      </span>}
+      {rebuildStatus&&!rebuilding&&<span style={{fontSize:11,color:rebuildStatus.startsWith("✓")?"#00b894":"#ff4757"}}>{rebuildStatus}</span>}
     </div>
 
     {/* Tab bar */}
     <div style={{display:"flex",gap:2,marginBottom:16,background:"#0a0e14",borderRadius:6,padding:3}}>
       {TABS.map(([id,label])=>(
-        <div key={id} onClick={()=>setTab(id)}
-          style={{flex:1,padding:"6px 0",textAlign:"center",fontSize:12,fontWeight:700,
-            letterSpacing:"0.08em",cursor:"pointer",borderRadius:4,
-            background:tab===id?"#1a2a3a":"transparent",
-            color:tab===id?"#e0e8f0":"#5a7a8a"}}>
+        <div key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"6px 0",textAlign:"center",fontSize:11,fontWeight:700,
+          letterSpacing:"0.07em",cursor:"pointer",borderRadius:4,
+          background:tab===id?"#1a2a3a":"transparent",color:tab===id?"#e0e8f0":"#5a7a8a"}}>
           {label}
         </div>
       ))}
@@ -9007,72 +9092,64 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
 
     {/* ── OVERVIEW ── */}
     {tab==="overview"&&<div>
-      {/* Big numbers */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:16}}>
-        {[
-          {label:"TOTAL LEGS",    value:historyStats.totalLegs?.toLocaleString(),    color:"#4a9eff"},
-          {label:"BLOCK HOURS",   value:fmtH(historyStats.totalMins),                color:"#00b894"},
-          {label:"PAX CARRIED",   value:historyStats.totalPax?.toLocaleString(),     color:"#ffd740"},
-          {label:"PILOTS EVER",   value:historyStats.uniquePilots?.toString(),       color:"#a29bfe"},
-        ].map(s=>(
-          <div key={s.label} style={{background:"#0a0e14",borderRadius:6,padding:"10px 8px",
-            border:"1px solid #1e2730",textAlign:"center"}}>
-            <div style={{fontSize:11,color:"#5a7a8a",letterSpacing:"0.08em",marginBottom:4}}>{s.label}</div>
-            <div style={{fontSize:22,fontWeight:700,color:s.color}}>{s.value||"—"}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:14}}>
+        {[{l:"TOTAL LEGS",v:historyStats.totalLegs?.toLocaleString(),c:"#4a9eff"},
+          {l:"BLOCK HOURS",v:fmtHi(historyStats.totalMins),c:"#00b894"},
+          {l:"PAX CARRIED",v:historyStats.totalPax?.toLocaleString(),c:"#ffd740"},
+          {l:"PILOTS EVER",v:historyStats.uniquePilots?.toString(),c:"#a29bfe"}].map(s=>(
+          <div key={s.l} style={{background:"#0a0e14",borderRadius:6,padding:"10px 8px",border:"1px solid #1e2730",textAlign:"center"}}>
+            <div style={{fontSize:10,color:"#5a7a8a",letterSpacing:"0.08em",marginBottom:4}}>{s.l}</div>
+            <div style={{fontSize:20,fontWeight:700,color:s.c}}>{s.v||"—"}</div>
           </div>
         ))}
       </div>
-      <div style={{fontSize:11,color:"#3a5060",marginBottom:16,textAlign:"center"}}>
+      <div style={{fontSize:11,color:"#3a5060",marginBottom:14,textAlign:"center"}}>
         {historyStats.dateRange?.start} → {historyStats.dateRange?.end}
       </div>
 
-      {/* Year-by-year */}
-      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>YEAR BY YEAR</div>
-      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",padding:"10px 12px",marginBottom:16}}>
+      <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>YEAR BY YEAR</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",padding:"10px 12px",marginBottom:14}}>
         {Object.entries(historyStats.byYear||{}).sort((a,b)=>a[0].localeCompare(b[0])).map(([y,d])=>{
-          const pct = d.legs/maxYearLegs;
-          const isCovidYear = y==="2020";
-          return <div key={y} style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
-            <span style={{width:36,fontSize:12,color:isCovidYear?"#ff6d00":"#7a9ab8",flexShrink:0}}>{y}</span>
-            <div style={{flex:1,height:14,background:"#1e2730",borderRadius:2,overflow:"hidden"}}>
-              <div style={{height:"100%",width:`${pct*100}%`,background:isCovidYear?"#ff6d0055":"#4a9eff55",borderRadius:2}}/>
+          const pct=d.legs/maxYearLegs; const covid=y==="2020"; const hov=hoveredYear===y;
+          return <div key={y} style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,cursor:"pointer"}}
+            onMouseEnter={()=>setHoveredYear(y)} onMouseLeave={()=>setHoveredYear(null)}>
+            <span style={{width:36,fontSize:12,color:covid?"#ff6d00":hov?"#e0e8f0":"#7a9ab8",flexShrink:0,fontWeight:hov?700:400}}>{y}</span>
+            <div style={{flex:1,height:hov?18:14,background:"#1e2730",borderRadius:2,overflow:"hidden",transition:"height 0.1s"}}>
+              <div style={{height:"100%",width:`${pct*100}%`,background:covid?"#ff6d0055":hov?"#4a9eff":"#4a9eff55",borderRadius:2,transition:"background 0.15s"}}/>
             </div>
-            <span style={{width:60,fontSize:12,color:"#9abacb",textAlign:"right"}}>{d.legs.toLocaleString()}</span>
-            <span style={{width:55,fontSize:12,color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
-            <span style={{width:45,fontSize:12,color:"#5a7a8a",textAlign:"right"}}>{fmtK(d.pax)} pax</span>
+            {hov?<>
+              <span style={{width:60,fontSize:12,color:"#4a9eff",textAlign:"right",fontWeight:700}}>{d.legs.toLocaleString()}</span>
+              <span style={{width:55,fontSize:12,color:"#00b894",textAlign:"right"}}>{fmtH(d.mins)}</span>
+              <span style={{width:50,fontSize:12,color:"#ffd740",textAlign:"right"}}>{fmtK(d.pax)}p</span>
+            </>:<>
+              <span style={{width:60,fontSize:12,color:"#9abacb",textAlign:"right"}}>{d.legs.toLocaleString()}</span>
+              <span style={{width:55,fontSize:12,color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
+              <span style={{width:50,fontSize:12,color:"#5a7a8a",textAlign:"right"}}>{fmtK(d.pax)}p</span>
+            </>}
           </div>;
         })}
       </div>
 
-      {/* Seasonal */}
-      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>SEASONAL PATTERN</div>
-      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",padding:"10px 12px",marginBottom:16}}>
-        <div style={{display:"flex",alignItems:"flex-end",gap:4,height:60}}>
+      <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>SEASONAL PATTERN</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",padding:"10px 12px",marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"flex-end",gap:4,height:64}}>
           {(historyStats.byMonth||[]).map((d,i)=>{
-            const pct=d.legs/maxMonthLegs;
-            const isSummer=i>=4&&i<=8;
+            const pct=d.legs/maxMonthLegs; const summer=i>=4&&i<=8;
             return <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-              <div style={{width:"100%",background:isSummer?"#4a9eff":"#2a4a6a",borderRadius:"2px 2px 0 0",
-                height:`${Math.max(4,pct*52)}px`}}/>
-              <span style={{fontSize:9,color:isSummer?"#4a9eff":"#3a5a6a"}}>{MONTHS[i].slice(0,1)}</span>
+              <div style={{width:"100%",background:summer?"#4a9eff":"#2a4a6a",borderRadius:"2px 2px 0 0",height:`${Math.max(4,pct*56)}px`}}/>
+              <span style={{fontSize:9,color:summer?"#4a9eff":"#3a5a6a"}}>{MONTHS[i].slice(0,1)}</span>
             </div>;
           })}
         </div>
-        <div style={{fontSize:11,color:"#3a5060",marginTop:4}}>May–Aug averages 3–4× winter volume</div>
       </div>
 
-      {/* Top days */}
-      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>TOP 20 DAYS — MOST LEGS</div>
-      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
-        <div style={{display:"grid",gridTemplateColumns:"95px 55px 60px 55px 55px",gap:4,
-          padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
-          <span>DATE</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>BLOCK</span>
-          <span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>PILOTS</span>
+      <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>TOP 20 DAYS — MOST LEGS</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"100px 55px 60px 55px 55px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+          <span>DATE</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>BLOCK</span><span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>PILOTS</span>
         </div>
         {(historyStats.topDaysByLegs||[]).map((d,i)=>(
-          <div key={i} style={{display:"grid",gridTemplateColumns:"95px 55px 60px 55px 55px",gap:4,
-            padding:"5px 10px",fontSize:14,borderBottom:i<19?"1px solid #0d1117":"none",
-            background:i%2===0?"#08101e":"#0a1220"}}>
+          <div key={i} style={{display:"grid",gridTemplateColumns:"100px 55px 60px 55px 55px",gap:4,padding:"5px 10px",fontSize:13,borderBottom:i<19?"1px solid #0d1117":"none",background:i%2===0?"#08101e":"#0a1220"}}>
             <span style={{color:"#b8c8d8"}}>{d.date}</span>
             <span style={{color:"#4a9eff",fontWeight:700,textAlign:"right"}}>{d.legs}</span>
             <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
@@ -9082,18 +9159,13 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
         ))}
       </div>
 
-      {/* Top days by pax */}
-      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>TOP 20 DAYS — MOST PAX</div>
+      <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>TOP 20 DAYS — MOST PAX</div>
       <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
-        <div style={{display:"grid",gridTemplateColumns:"95px 55px 60px 55px 55px",gap:4,
-          padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
-          <span>DATE</span><span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>BLOCK</span>
-          <span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>PILOTS</span>
+        <div style={{display:"grid",gridTemplateColumns:"100px 55px 60px 55px 55px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+          <span>DATE</span><span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>BLOCK</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>PILOTS</span>
         </div>
         {(historyStats.topDaysByPax||[]).map((d,i)=>(
-          <div key={i} style={{display:"grid",gridTemplateColumns:"95px 55px 60px 55px 55px",gap:4,
-            padding:"5px 10px",fontSize:14,borderBottom:i<19?"1px solid #0d1117":"none",
-            background:i%2===0?"#08101e":"#0a1220"}}>
+          <div key={i} style={{display:"grid",gridTemplateColumns:"100px 55px 60px 55px 55px",gap:4,padding:"5px 10px",fontSize:13,borderBottom:i<19?"1px solid #0d1117":"none",background:i%2===0?"#08101e":"#0a1220"}}>
             <span style={{color:"#b8c8d8"}}>{d.date}</span>
             <span style={{color:"#ffd740",fontWeight:700,textAlign:"right"}}>{d.pax}</span>
             <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
@@ -9104,84 +9176,119 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
       </div>
     </div>}
 
-    {/* ── PILOTS ── */}
-    {tab==="pilots"&&<div>
-      <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center"}}>
-        <input value={pilotSearch} onChange={e=>setPilotSearch(e.target.value)}
-          placeholder="Search pilot..." style={{flex:1,background:"#0a1018",border:"1px solid #1e2730",
-          borderRadius:5,padding:"6px 10px",color:"#e0e8f0",fontSize:14,fontFamily:"'JetBrains Mono',monospace"}}/>
-        <div style={{display:"flex",gap:4}}>
-          {[["legs","LEGS"],["hours","HRS"],["totalPax","PAX"]].map(([k,l])=>(
-            <div key={k} onClick={()=>setPilotSort(k)} style={{padding:"4px 8px",borderRadius:4,fontSize:11,
-              fontWeight:700,cursor:"pointer",background:pilotSort===k?"#1a2a3a":"transparent",
-              color:pilotSort===k?"#4a9eff":"#5a7a8a",border:"1px solid",borderColor:pilotSort===k?"#4a9eff44":"transparent"}}>
-              {l}
-            </div>
+    {/* ── RECORDS ── */}
+    {tab==="records"&&(()=>{
+      const rec = historyStats.records||{};
+      const RTABS=[["pilots","PILOTS"],["routes","ROUTES"],["days","DAYS"],["fleet","FLEET"]];
+      const boards = {
+        pilots:[
+          {title:"MOST LEGS FLOWN",icon:"✈",items:rec.mostLegs||[],valColor:"#4a9eff"},
+          {title:"MOST BLOCK HOURS",icon:"⏱",items:rec.mostHours||[],valColor:"#00b894",unit:"h"},
+          {title:"MOST PAX CARRIED",icon:"👥",items:rec.mostPax||[],valColor:"#ffd740"},
+        ],
+        routes:[
+          {title:"TOP ROUTES — LEGS",icon:"🗺",items:rec.topRouteLegs||[],valColor:"#4a9eff"},
+          {title:"TOP ROUTES — PAX",icon:"👥",items:rec.topRoutePax||[],valColor:"#ffd740"},
+        ],
+        days:[
+          {title:"BUSIEST DAYS — LEGS",icon:"📅",items:rec.busyDays||[],valColor:"#4a9eff"},
+          {title:"BUSIEST DAYS — PAX",icon:"🧳",items:rec.paxDays||[],valColor:"#ffd740"},
+        ],
+        fleet:[
+          {title:"TOP TAILS — LIFETIME LEGS",icon:"✈",items:rec.topTails||[],valColor:"#00b894"},
+        ],
+      };
+      return <div>
+        <div style={{display:"flex",gap:2,marginBottom:14,background:"#0a0e14",borderRadius:6,padding:3}}>
+          {RTABS.map(([id,l])=>(
+            <div key={id} onClick={()=>setRecordsTab(id)} style={{flex:1,padding:"5px 0",textAlign:"center",fontSize:11,fontWeight:700,
+              letterSpacing:"0.07em",cursor:"pointer",borderRadius:4,
+              background:recordsTab===id?"#1a2a3a":"transparent",color:recordsTab===id?"#e0e8f0":"#5a7a8a"}}>{l}</div>
           ))}
         </div>
-      </div>
+        {(boards[recordsTab]||[]).map((board,bi)=>(
+          <div key={bi} style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>
+              {board.icon} {board.title}
+            </div>
+            <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
+              {(board.items||[]).map((item,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",
+                  borderBottom:i<board.items.length-1?"1px solid #0d1117":"none",
+                  background:i===0?"#0a1a0a":i%2===0?"#08101e":"#0a1220",cursor:"pointer"}}
+                  onClick={()=>{ const p=historyStats.byPilot?.[item.username]; if(p) setSelectedPilot(p); }}>
+                  <span style={{width:20,fontSize:12,color:i===0?"#ffd740":i===1?"#9abacb":i===2?"#a0734a":"#3a5060",fontWeight:700}}>
+                    {i===0?"🥇":i===1?"🥈":i===2?"🥉":`${i+1}.`}
+                  </span>
+                  <span style={{flex:1,fontSize:14,color:i===0?"#e0e8f0":"#b0c0d0",fontWeight:i===0?700:400}}>{item.name}</span>
+                  <span style={{fontSize:16,fontWeight:700,color:board.valColor}}>{typeof item.value==='number'?item.value.toLocaleString():item.value}</span>
+                  <span style={{fontSize:11,color:"#5a7a8a",minWidth:60,textAlign:"right"}}>{item.sub}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>;
+    })()}
 
-      <div style={{fontSize:12,color:"#5a7a8a",marginBottom:8}}>{filteredActive.length} active pilots (flown in last 90 days)</div>
+    {/* ── PILOTS ── */}
+    {tab==="pilots"&&<div>
+      <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
+        <input value={pilotSearch} onChange={e=>setPilotSearch(e.target.value)} placeholder="Search pilot..."
+          style={{flex:1,background:"#0a1018",border:"1px solid #1e2730",borderRadius:5,padding:"6px 10px",
+          color:"#e0e8f0",fontSize:13,fontFamily:"'JetBrains Mono',monospace"}}/>
+        {[["hours","HRS"],["totalLegs","LEGS"],["totalPax","PAX"]].map(([k,l])=>(
+          <div key={k} onClick={()=>setPilotSort(k)} style={{padding:"4px 8px",borderRadius:4,fontSize:11,fontWeight:700,cursor:"pointer",
+            background:pilotSort===k?"#1a2a3a":"transparent",color:pilotSort===k?"#4a9eff":"#5a7a8a",
+            border:"1px solid",borderColor:pilotSort===k?"#4a9eff44":"transparent"}}>{l}</div>
+        ))}
+      </div>
+      <div style={{fontSize:11,color:"#4a6070",marginBottom:8}}>
+        {filtActive.length} active pilots · tap a card for full career detail
+      </div>
       <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
-        {filteredActive.map(p=>(
-          <div key={p.username} style={{background:"#0a0e14",borderRadius:6,padding:"10px 12px",
-            border:"1px solid #1e2730"}}>
+        {filtActive.map(p=>(
+          <div key={p.username} onClick={()=>setSelectedPilot(p)}
+            style={{background:"#0a0e14",borderRadius:6,padding:"10px 12px",border:"1px solid #1e2730",cursor:"pointer",transition:"border-color 0.15s"}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor="#4a9eff44"}
+            onMouseLeave={e=>e.currentTarget.style.borderColor="#1e2730"}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
               <div>
                 <span style={{fontSize:15,fontWeight:700,color:"#e0e8f0"}}>{p.fullName}</span>
                 <span style={{fontSize:11,color:"#3a5060",marginLeft:6}}>{p.username}</span>
                 {p.years?.length>0&&<span style={{fontSize:11,color:"#4a9eff",marginLeft:6}}>{p.years[0]}–{p.years[p.years.length-1]}</span>}
               </div>
-              <div style={{textAlign:"right",fontSize:12,color:"#5a7a8a"}}>
+              <div style={{textAlign:"right",fontSize:11,color:"#5a7a8a"}}>
                 <div>{p.locationCount} locations</div>
-                <div>{p.years?.length||0} years</div>
+                <div style={{color:"#3a5060"}}>tap for detail ›</div>
               </div>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6}}>
-              {[
-                {l:"LEGS",  v:p.totalLegs?.toLocaleString(), c:"#4a9eff"},
-                {l:"HOURS", v:fmtH(p.totalMins),             c:"#00b894"},
-                {l:"PAX",   v:p.totalPax?.toLocaleString(),  c:"#ffd740"},
-                {l:"CP HRS",v:p.cpMins>0?fmtH(p.cpMins):"—",c:"#a29bfe"},
-              ].map(s=>(
-                <div key={s.l} style={{background:"#060a0f",borderRadius:4,padding:"6px 8px"}}>
+              {[{l:"LEGS",v:p.totalLegs?.toLocaleString(),c:"#4a9eff"},{l:"HOURS",v:fmtH(p.totalMins),c:"#00b894"},
+                {l:"PAX",v:p.totalPax?.toLocaleString(),c:"#ffd740"},{l:"CP HRS",v:p.cpMins>0?fmtH(p.cpMins):"—",c:"#a29bfe"}].map(s=>(
+                <div key={s.l} style={{background:"#060a0f",borderRadius:4,padding:"5px 8px"}}>
                   <div style={{fontSize:10,color:"#4a5a6a"}}>{s.l}</div>
-                  <div style={{fontSize:16,fontWeight:700,color:s.c}}>{s.v}</div>
+                  <div style={{fontSize:15,fontWeight:700,color:s.c}}>{s.v}</div>
                 </div>
               ))}
             </div>
-            {Object.keys(p.byType||{}).length>0&&<div style={{marginTop:6,display:"flex",gap:6,flexWrap:"wrap"}}>
-              {Object.entries(p.byType).filter(([t])=>t!=='UNK').map(([t,m])=>(
-                <span key={t} style={{fontSize:11,color:"#6a8a9a",background:"#0d1520",padding:"2px 6px",borderRadius:3}}>
-                  {TAIL_LABEL[t]||t}: {fmtH(m)}
-                </span>
-              ))}
-            </div>}
-            {p.topDests?.length>0&&<div style={{marginTop:5,fontSize:11,color:"#4a6070"}}>
-              Top: {p.topDests.slice(0,6).map(d=>`${d.dest}(${d.n})`).join(" · ")}
-            </div>}
           </div>
         ))}
       </div>
-
-      {/* Alumni */}
-      <div onClick={()=>setShowAlumni(!showAlumni)}
-        style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",padding:"8px 12px",
-          background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",marginBottom:showAlumni?8:0}}>
-        <span style={{fontSize:13,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.08em"}}>
-          ✈ ALUMNI — {filteredAlumni.length} former pilots
+      <div onClick={()=>setShowAlumni(!showAlumni)} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",
+        padding:"8px 12px",background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",marginBottom:showAlumni?8:0}}>
+        <span style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.08em"}}>
+          ✈ ALUMNI — {filtAlumni.length} former pilots
         </span>
-        <span style={{fontSize:14,color:showAlumni?"#5aaa8a":"#4a9eff",marginLeft:4}}>
-          {showAlumni?"▼":"▶"}
-        </span>
+        <span style={{fontSize:13,color:showAlumni?"#5aaa8a":"#4a9eff",marginLeft:4}}>{showAlumni?"▼":"▶"}</span>
       </div>
       {showAlumni&&<div style={{display:"flex",flexDirection:"column",gap:4}}>
-        {filteredAlumni.map(p=>(
-          <div key={p.username} style={{background:"#08101e",borderRadius:6,padding:"8px 12px",
-            border:"1px solid #1e2730",opacity:0.7}}>
+        {filtAlumni.map(p=>(
+          <div key={p.username} onClick={()=>setSelectedPilot(p)}
+            style={{background:"#08101e",borderRadius:6,padding:"8px 12px",border:"1px solid #1e2730",opacity:0.75,cursor:"pointer"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <span style={{fontSize:14,fontWeight:700,color:"#8a9ab0"}}>{p.fullName}</span>
+                <span style={{fontSize:13,fontWeight:700,color:"#8a9ab0"}}>{p.fullName}</span>
                 <span style={{fontSize:11,color:"#3a5060",marginLeft:6}}>{p.username}</span>
               </div>
               <div style={{fontSize:11,color:"#3a5060",textAlign:"right"}}>
@@ -9197,53 +9304,25 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
       </div>}
     </div>}
 
-    {/* ── LOCATIONS ── */}
-    {tab==="locations"&&<div>
-      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>PRIMARY ROUTES</div>
-      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
-        <div style={{display:"grid",gridTemplateColumns:"60px 70px 60px 70px 80px",gap:4,
-          padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
-          <span>LOC</span><span style={{textAlign:"right"}}>LEGS</span>
-          <span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span>
-          <span style={{textAlign:"right"}}>PILOTS</span>
+    {/* ── ROUTES ── */}
+    {tab==="routes"&&<div>
+      <input value={routeSearch} onChange={e=>setRouteSearch(e.target.value)} placeholder="Filter routes (e.g. HNH, JNU→GST)..."
+        style={{width:"100%",background:"#0a1018",border:"1px solid #1e2730",borderRadius:5,padding:"7px 10px",
+        color:"#e0e8f0",fontSize:13,fontFamily:"'JetBrains Mono',monospace",marginBottom:10,boxSizing:"border-box"}}/>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
+        <div style={{display:"grid",gridTemplateColumns:"120px 65px 60px 65px 65px",gap:4,padding:"6px 10px",
+          borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+          <span>ROUTE</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>HOURS</span>
+          <span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>PILOTS</span>
         </div>
-        {(historyStats.destStats||[])
-          .filter(d=>AKS_PRIMARY.includes(d.loc))
-          .sort((a,b)=>b.legs-a.legs)
-          .map((d,i,arr)=>(
-          <div key={d.loc} style={{display:"grid",gridTemplateColumns:"60px 70px 60px 70px 80px",gap:4,
-            padding:"5px 10px",fontSize:14,borderBottom:i<arr.length-1?"1px solid #0d1117":"none",
-            background:i%2===0?"#08101e":"#0a1220"}}>
-            <span style={{color:"#4a9eff",fontWeight:700,fontFamily:"monospace"}}>{d.loc}</span>
-            <span style={{color:"#e0e8f0",textAlign:"right"}}>{d.legs.toLocaleString()}</span>
-            <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
-            <span style={{color:"#ffd740",textAlign:"right"}}>{d.pax.toLocaleString()}</span>
-            <span style={{color:"#5a7a8a",textAlign:"right"}}>{d.pilotCount} pilots</span>
-          </div>
-        ))}
-      </div>
-
-      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>SPECIAL OPERATIONS</div>
-      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
-        <div style={{display:"grid",gridTemplateColumns:"60px 70px 60px 70px 80px",gap:4,
-          padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
-          <span>LOC</span><span style={{textAlign:"right"}}>LEGS</span>
-          <span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span>
-          <span style={{textAlign:"right"}}>PILOTS</span>
-        </div>
-        {(historyStats.destStats||[])
-          .filter(d=>!AKS_PRIMARY.includes(d.loc)&&d.loc!=="JNU"&&d.legs>=10)
-          .sort((a,b)=>b.legs-a.legs)
-          .slice(0,20)
-          .map((d,i)=>(
-          <div key={d.loc} style={{display:"grid",gridTemplateColumns:"60px 70px 60px 70px 80px",gap:4,
-            padding:"5px 10px",fontSize:14,borderBottom:i<19?"1px solid #0d1117":"none",
-            background:i%2===0?"#08101e":"#0a1220"}}>
-            <span style={{color:"#a29bfe",fontWeight:700,fontFamily:"monospace"}}>{d.loc}</span>
-            <span style={{color:"#e0e8f0",textAlign:"right"}}>{d.legs.toLocaleString()}</span>
-            <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
-            <span style={{color:"#ffd740",textAlign:"right"}}>{d.pax.toLocaleString()}</span>
-            <span style={{color:"#5a7a8a",textAlign:"right"}}>{d.pilotCount} pilots</span>
+        {filtRoutes.slice(0,60).map((r,i)=>(
+          <div key={i} style={{display:"grid",gridTemplateColumns:"120px 65px 60px 65px 65px",gap:4,padding:"5px 10px",fontSize:13,
+            borderBottom:i<filtRoutes.length-1?"1px solid #0d1117":"none",background:i%2===0?"#08101e":"#0a1220"}}>
+            <span style={{color:"#4a9eff",fontFamily:"monospace",fontWeight:700}}>{r.route}</span>
+            <span style={{color:"#e0e8f0",textAlign:"right"}}>{r.legs.toLocaleString()}</span>
+            <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(r.mins)}</span>
+            <span style={{color:"#ffd740",textAlign:"right"}}>{r.pax.toLocaleString()}</span>
+            <span style={{color:"#5a7a8a",textAlign:"right"}}>{r.pilotCount}</span>
           </div>
         ))}
       </div>
@@ -9254,41 +9333,33 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
       const active  = (historyStats.tailStats||[]).filter(t=>t.active);
       const retired = (historyStats.tailStats||[]).filter(t=>!t.active);
       return <div>
-        <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>CURRENT FLEET — LIFETIME STATS</div>
+        <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>CURRENT FLEET — LIFETIME STATS</div>
         <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
-          <div style={{display:"grid",gridTemplateColumns:"90px 70px 60px 60px 85px",gap:4,
-            padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
-            <span>TAIL</span><span style={{textAlign:"right"}}>LEGS</span>
-            <span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span><span>FIRST FLIGHT</span>
+          <div style={{display:"grid",gridTemplateColumns:"90px 65px 60px 60px 85px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+            <span>TAIL</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span><span>SINCE</span>
           </div>
           {active.map((t,i)=>(
-            <div key={t.tail} style={{display:"grid",gridTemplateColumns:"90px 70px 60px 60px 85px",gap:4,
-              padding:"5px 10px",fontSize:14,borderBottom:i<active.length-1?"1px solid #0d1117":"none",
-              background:i%2===0?"#08101e":"#0a1220"}}>
+            <div key={t.tail} style={{display:"grid",gridTemplateColumns:"90px 65px 60px 60px 85px",gap:4,padding:"5px 10px",fontSize:13,
+              borderBottom:i<active.length-1?"1px solid #0d1117":"none",background:i%2===0?"#08101e":"#0a1220"}}>
               <span style={{color:"#00b894",fontWeight:700,fontFamily:"monospace"}}>{t.tail}</span>
               <span style={{color:"#e0e8f0",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
-              <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(t.mins)}</span>
+              <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtHi(t.mins)}</span>
               <span style={{color:"#ffd740",textAlign:"right"}}>{t.pax.toLocaleString()}</span>
               <span style={{color:"#4a6070",fontSize:12}}>{t.firstDate}</span>
             </div>
           ))}
         </div>
-
-        <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>RETIRED FLEET — ALUMNI AIRCRAFT</div>
+        <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>RETIRED FLEET</div>
         <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
-          <div style={{display:"grid",gridTemplateColumns:"90px 70px 60px 60px 85px 80px",gap:4,
-            padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
-            <span>TAIL</span><span style={{textAlign:"right"}}>LEGS</span>
-            <span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span>
-            <span>FIRST</span><span>LAST</span>
+          <div style={{display:"grid",gridTemplateColumns:"90px 65px 60px 60px 75px 75px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+            <span>TAIL</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span><span>FIRST</span><span>LAST</span>
           </div>
           {retired.sort((a,b)=>b.legs-a.legs).map((t,i)=>(
-            <div key={t.tail} style={{display:"grid",gridTemplateColumns:"90px 70px 60px 60px 85px 80px",gap:4,
-              padding:"5px 10px",fontSize:14,borderBottom:i<retired.length-1?"1px solid #0d1117":"none",
-              background:i%2===0?"#08101e":"#0a1220",opacity:0.7}}>
+            <div key={t.tail} style={{display:"grid",gridTemplateColumns:"90px 65px 60px 60px 75px 75px",gap:4,padding:"5px 10px",fontSize:13,
+              borderBottom:i<retired.length-1?"1px solid #0d1117":"none",background:i%2===0?"#08101e":"#0a1220",opacity:0.75}}>
               <span style={{color:"#7a9ab8",fontWeight:700,fontFamily:"monospace"}}>{t.tail}</span>
               <span style={{color:"#b8c8d8",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
-              <span style={{color:"#5a7a8a",textAlign:"right"}}>{fmtH(t.mins)}</span>
+              <span style={{color:"#5a7a8a",textAlign:"right"}}>{fmtHi(t.mins)}</span>
               <span style={{color:"#8a8a60",textAlign:"right"}}>{t.pax.toLocaleString()}</span>
               <span style={{color:"#3a5060",fontSize:12}}>{t.firstDate}</span>
               <span style={{color:"#3a5060",fontSize:12}}>{t.lastDate}</span>
@@ -9299,7 +9370,6 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
     })()}
   </div>;
 }
-
 // ── MAIN ───────────────────────────────────────────────────────────────────────
 const NAV=[
   {id:"fleet", icon:"👥",label:"FLT/DUTY"},
