@@ -1923,13 +1923,18 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
         console.error('History stats failed:', e.message);
       setBulkError('Stats computation failed: '+e.message);
       }
-      // Upsert to aks_flights in background
-      upsertFlightsBatch(merged, (done,total)=>{
-        setBulkUpsertProg({done,total});
-      }).then(n=>{
+      // Upsert to aks_flights — BLOCKING, show warning, don't mark done until complete
+      setBulkUpsertProg({done:0, total:1, saving:true});
+      try {
+        await upsertFlightsBatch(merged, (done,total)=>{
+          setBulkUpsertProg({done, total, saving:true});
+        });
         setBulkUpsertProg(null);
         setBulkDone(true);
-      }).catch(e=>console.warn('Bulk upsert error:',e.message));
+      } catch(e) {
+        setBulkUpsertProg(null);
+        setBulkError('Supabase sync failed: '+e.message);
+      }
     }, 100);
   };
 
@@ -2050,13 +2055,20 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
           </div>
         ))}
       </div>}
-      {bulkUpsertProg&&<div style={{marginTop:8}}>
-        <div style={{fontSize:12,color:"#4a9eff",marginBottom:4}}>
-          📡 Syncing to Supabase... {bulkUpsertProg.done.toLocaleString()}/{bulkUpsertProg.total.toLocaleString()} rows
+      {bulkUpsertProg&&<div style={{marginTop:8,background:"rgba(74,158,255,0.08)",
+        border:"1px solid rgba(74,158,255,0.3)",borderRadius:6,padding:"10px 12px"}}>
+        <div style={{fontSize:13,color:"#ff9944",fontWeight:700,marginBottom:4}}>
+          ⚠ DO NOT NAVIGATE AWAY — syncing to Supabase
         </div>
-        <div style={{height:4,background:"#1e2730",borderRadius:2,overflow:"hidden"}}>
-          <div style={{height:"100%",background:"#4a9eff",borderRadius:2,
-            width:`${Math.round(bulkUpsertProg.done/bulkUpsertProg.total*100)}%`}}/>
+        <div style={{fontSize:12,color:"#4a9eff",marginBottom:6}}>
+          📡 {bulkUpsertProg.done.toLocaleString()} / {bulkUpsertProg.total.toLocaleString()} rows
+          {bulkUpsertProg.total>0&&<span style={{color:"#5a7a8a",marginLeft:6}}>
+            ({Math.round(bulkUpsertProg.done/bulkUpsertProg.total*100)}%)
+          </span>}
+        </div>
+        <div style={{height:6,background:"#1e2730",borderRadius:3,overflow:"hidden"}}>
+          <div style={{height:"100%",background:"#4a9eff",borderRadius:3,transition:"width 0.3s",
+            width:`${bulkUpsertProg.total>0?Math.round(bulkUpsertProg.done/bulkUpsertProg.total*100):2}%`}}/>
         </div>
       </div>}
       {bulkDone&&<div style={{marginTop:8,fontSize:13,color:"#00b894",fontWeight:700}}>
