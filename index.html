@@ -318,7 +318,207 @@ const APP_VERSION = "1.5.2"; // major.minor.patch — minor=new features, patch=
 const SK = { flights:"aks_v3_flights", profile:"aks_v3_profile", duties:"aks_v3_duties",
   fleet:`aks_${STORAGE_VERSION}_fleet`, crew:"aks_v3_crew", delays:"aks_v3_delays",
   nightCurrency:"aks_v3_nightcurrency", recon:"aks_v3_recon", spider:"aks_v3_spider",
-  routes:"aks_v3_routeavgs", quals:"aks_v3_quals", winterMode:"aks_v3_wintermode" };
+  routes:"aks_v3_routeavgs", quals:"aks_v3_quals", winterMode:"aks_v3_wintermode",
+  historyStats:"aks_v3_historystats" };
+
+// ── AKSFLIGHTS SUPABASE TABLE ─────────────────────────────────────────────────
+// Batch upsert parsed flights to aks_flights table. Processes in chunks of 400.
+// pk = date + '_' + (flightNo||id) + '_' + pilot — stable composite key for dedup.
+async function upsertFlightsBatch(pilotFlights, onProgress) {
+  const rows = [];
+  Object.entries(pilotFlights).forEach(([pilot, flights]) => {
+    flights.forEach(f => {
+      if(f._isCoPilot) return; // skip CA right-seat duplicates — stored once on main pilot
+      const pk = `${f.date||'0000-00-00'}_${f.notes||f.id||''}_${pilot}`;
+      rows.push({
+        pk,
+        flight_id: f.notes || '',
+        pilot,
+        date: f.date || '2000-01-01',
+        tail: f.tailNumber || '',
+        origin: f.origin || '',
+        destination: f.destination || '',
+        flight_type: f.trainingType || f.dutyType || '',
+        status: f._status || '',
+        start_time: f.startTaxi || '',
+        stop_time: f.stopTaxi || '',
+        sched_off: f.schedOff || '',
+        sched_on: f.schedOn || '',
+        block_mins: f.totalMinutes || 0,
+        pax: parseInt(f.pax) || 0,
+        landings: f.landings || 1,
+        vfr_ifr: f.flightRules || 'VFR',
+        delay_code: f.delayCode || '',
+        fuel_uplift: f.fuelUplift || 0,
+        co_pilot: f._caSupervisor ? '' : '',  // co_pilot is on the source row
+        office: f._office || '',
+        is_ioe: !!f._isIOE,
+        updated_at: new Date().toISOString(),
+      });
+    });
+  });
+
+  const CHUNK = 400;
+  let done = 0;
+  for(let i=0; i<rows.length; i+=CHUNK) {
+    const chunk = rows.slice(i, i+CHUNK);
+    try {
+      const res = await fetch(`${SUPA_URL}/rest/v1/aks_flights?apikey=${SUPA_KEY}`, {
+        method: 'POST',
+        headers: {...SUPA_HDRS, 'Prefer': 'resolution=merge-duplicates'},
+        body: JSON.stringify(chunk),
+      });
+      if(!res.ok) console.warn('Upsert chunk failed:', res.status, await res.text());
+    } catch(e) { console.warn('Upsert error:', e.message); }
+    done += chunk.length;
+    if(onProgress) onProgress(done, rows.length);
+  }
+  return rows.length;
+}
+
+// ── HISTORY STATS COMPUTATION ─────────────────────────────────────────────────
+// Run after any flight log upload. Computes career/location/fleet stats from
+// all pilot flights in memory and caches to Supabase aks_store.
+const TAIL_TYPE_MAP = {
+  // Current fleet
+  'N777DH':'SE','N4794C':'SE','N743KP':'SE','N60TF':'SE','N748KP':'SE','N749KP':'SE',
+  'N721KP':'MET','N722KP':'MET','N726KP':'MET',
+  'N754KP':'MET','N753KP':'MET','N755KP':'MET',
+  'N450KP':'MET','N438JP':'MET','N336JP':'MET','N264KP':'MET','N265KP':'MET',
+  // Historical fleet (best classification)
+  'N750KP':'MET','N746KP':'MET','N1301L':'MET','N208TW':'MET','N265KP':'MET',
+  'N760KP':'SE','N761KP':'SE',
+};
+const TAIL_LABEL = {
+  'SE':'Single Engine','MET':'Multi-Engine Turbine','MER':'Multi-Engine Recip',
+};
+
+// AKS operating locations for gap analysis
+const AKS_ALL_LOCS = ['JNU','HNH','HNS','SGY','SIT','KTN','PSG','WRG','KAE','KLW','CGA','HYD','AGN','GST','YAK','PEL','ELV','TKE','PTH','FNR','HKB','KXA','PACK','NORR','PYBU'];
+
+function computeHistoryStats(pilotFlights) {
+  const all = [];
+  Object.entries(pilotFlights).forEach(([pilot, flights]) => {
+    flights.forEach(f => {
+      if(f._isCoPilot) return;
+      all.push({...f, _pilot: pilot});
+    });
+  });
+
+  const comp = all.filter(f => f._status === 'completed' && f.totalMinutes > 0);
+
+  // Company totals
+  const totalLegs = comp.length;
+  const totalMins = comp.reduce((s,f) => s+(f.totalMinutes||0), 0);
+  const totalPax  = comp.reduce((s,f) => s+(parseInt(f.pax)||0), 0);
+
+  // By year
+  const byYear = {};
+  comp.forEach(f => {
+    const y = f.date?.slice(0,4); if(!y) return;
+    if(!byYear[y]) byYear[y]={legs:0,mins:0,pax:0};
+    byYear[y].legs++; byYear[y].mins+=f.totalMinutes||0; byYear[y].pax+=parseInt(f.pax)||0;
+  });
+
+  // By month (seasonal, across all years)
+  const byMonth = Array(12).fill(null).map(()=>({legs:0,mins:0,pax:0}));
+  comp.forEach(f => {
+    const m=parseInt(f.date?.slice(5,7))-1;
+    if(m>=0&&m<12){byMonth[m].legs++;byMonth[m].mins+=f.totalMinutes||0;byMonth[m].pax+=parseInt(f.pax)||0;}
+  });
+
+  // By date (for top days)
+  const byDate = {};
+  comp.forEach(f => {
+    if(!f.date) return;
+    if(!byDate[f.date]) byDate[f.date]={legs:0,mins:0,pax:0,pilotsArr:[]};
+    byDate[f.date].legs++; byDate[f.date].mins+=f.totalMinutes||0; byDate[f.date].pax+=parseInt(f.pax)||0;
+    if(!byDate[f.date].pilotsArr.includes(f._pilot)) byDate[f.date].pilotsArr.push(f._pilot);
+  });
+  const topDaysByLegs = Object.entries(byDate)
+    .map(([d,v])=>({date:d,legs:v.legs,mins:v.mins,pax:v.pax,pilots:v.pilotsArr.length}))
+    .sort((a,b)=>b.legs-a.legs).slice(0,20);
+  const topDaysByPax = Object.entries(byDate)
+    .map(([d,v])=>({date:d,legs:v.legs,mins:v.mins,pax:v.pax,pilots:v.pilotsArr.length}))
+    .sort((a,b)=>b.pax-a.pax).slice(0,20);
+
+  // By destination
+  const byDest = {};
+  comp.forEach(f => {
+    if(!f.destination) return;
+    if(!byDest[f.destination]) byDest[f.destination]={legs:0,mins:0,pax:0,pilotsArr:[],firstDate:f.date,lastDate:f.date};
+    const d=byDest[f.destination];
+    d.legs++; d.mins+=f.totalMinutes||0; d.pax+=parseInt(f.pax)||0;
+    if(!d.pilotsArr.includes(f._pilot)) d.pilotsArr.push(f._pilot);
+    if(f.date<d.firstDate) d.firstDate=f.date;
+    if(f.date>d.lastDate)  d.lastDate=f.date;
+  });
+  const destStats = Object.entries(byDest).map(([loc,d])=>({
+    loc, legs:d.legs, mins:d.mins, pax:d.pax, pilotCount:d.pilotsArr.length,
+    firstDate:d.firstDate, lastDate:d.lastDate,
+  })).sort((a,b)=>b.legs-a.legs);
+
+  // By tail
+  const byTail = {};
+  comp.forEach(f => {
+    if(!f.tailNumber) return;
+    if(!byTail[f.tailNumber]) byTail[f.tailNumber]={legs:0,mins:0,pax:0,firstDate:f.date,lastDate:f.date};
+    const d=byTail[f.tailNumber];
+    d.legs++; d.mins+=f.totalMinutes||0; d.pax+=parseInt(f.pax)||0;
+    if(f.date<d.firstDate) d.firstDate=f.date;
+    if(f.date>d.lastDate)  d.lastDate=f.date;
+  });
+  const CURRENT_FLEET = new Set(['N721KP','N722KP','N726KP','N754KP','N753KP','N755KP',
+    'N450KP','N438JP','N336JP','N264KP','N265KP','N748KP','N749KP','N777DH','N4794C','N743KP','N60TF']);
+  const tailStats = Object.entries(byTail).map(([tail,d])=>({
+    tail, legs:d.legs, mins:d.mins, pax:d.pax,
+    firstDate:d.firstDate, lastDate:d.lastDate,
+    type:TAIL_TYPE_MAP[tail]||'?',
+    active: CURRENT_FLEET.has(tail),
+  })).sort((a,b)=>b.legs-a.legs);
+
+  // By pilot (career stats)
+  const TODAY_STR = (new Date()).toISOString().slice(0,10);
+  const byPilot = {};
+  Object.entries(pilotFlights).forEach(([pilot, flights]) => {
+    const pComp   = flights.filter(f=>!f._isCoPilot&&f._status==='completed'&&f.totalMinutes>0);
+    const cpLegs  = flights.filter(f=>f._isCoPilot&&f._status==='completed');
+    if(!pComp.length && !cpLegs.length) return;
+
+    const allDates = pComp.map(f=>f.date).filter(Boolean).sort();
+    const destFreq = {};
+    pComp.forEach(f=>{if(f.destination){destFreq[f.destination]=(destFreq[f.destination]||0)+1;}});
+    const topDests = Object.entries(destFreq).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([d,n])=>({dest:d,n}));
+    const byType={};
+    pComp.forEach(f=>{const t=TAIL_TYPE_MAP[f.tailNumber]||'UNK';byType[t]=(byType[t]||0)+(f.totalMinutes||0);});
+    const years=[...new Set(pComp.map(f=>f.date?.slice(0,4)).filter(Boolean))].sort();
+    const lastFlight = allDates[allDates.length-1]||null;
+    const daysSince  = lastFlight ? Math.floor((new Date(TODAY_STR)-new Date(lastFlight))/86400000) : 9999;
+    const ioeLegs    = pComp.filter(f=>f._isIOE);
+    const uniqueDests= [...new Set(pComp.map(f=>f.destination).filter(Boolean))];
+
+    byPilot[pilot] = {
+      username:pilot, fullName:PILOT_NAME_MAP[pilot]||pilot,
+      totalLegs:pComp.length,
+      totalMins:pComp.reduce((s,f)=>s+(f.totalMinutes||0),0),
+      totalPax:pComp.reduce((s,f)=>s+(parseInt(f.pax)||0),0),
+      cpMins:cpLegs.reduce((s,f)=>s+(f.totalMinutes||0),0),
+      byType, topDests, years, firstFlight:allDates[0]||null, lastFlight, daysSince,
+      locationCount:uniqueDests.length, uniqueDests,
+      ioeLegs:ioeLegs.length,
+    };
+  });
+
+  const allDatesAll = comp.map(f=>f.date).filter(Boolean).sort();
+  return {
+    generated: new Date().toISOString(),
+    totalLegs, totalMins, totalPax,
+    uniquePilots: Object.keys(byPilot).length,
+    dateRange: {start:allDatesAll[0], end:allDatesAll[allDatesAll.length-1]},
+    byYear, byMonth, topDaysByLegs, topDaysByPax,
+    destStats, tailStats, byPilot,
+  };
+}
 // ── SUPABASE STORAGE ──────────────────────────────────────────────────────────
 const SUPA_URL = "https://yulbmiwgdfozgrenfgfk.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1bGJtaXdnZGZvemdyZW5mZ2ZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMDU5MzgsImV4cCI6MjA4OTg4MTkzOH0.dgo6ycfY903E8wDIU-WgCaHOY2gctuCpcMmeEMijlas";
@@ -1240,7 +1440,7 @@ const cityToCode = (s) => {
 };
 
 // ── IMPORT SCREEN ─────────────────────────────────────────────────────────────
-function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, loaded }) {
+function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, onBulkHistoryComplete, loaded }) {
   const [source,setSource]=useState("flightlog");
   const [parsing,setParsing]=useState(false);
   const [preview,setPreview]=useState(null);
@@ -1250,10 +1450,7 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, lo
   const [rosFile,setRosFile]=useState(null);
   const logRef=useRef(), rosRef=useRef(), legRef=useRef();
 
-  // Bulk drop zone state
-  const [dropping, setDropping]   = useState(false);
-  const [bulkStatus, setBulkStatus] = useState([]); // [{name, status, msg}]
-  const [bulkRunning, setBulkRunning] = useState(false);
+  // (bulk state moved to handleBulkImport block)
 
   const detectFileType = (name) => {
     const n = name.toLowerCase();
@@ -1566,6 +1763,67 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, lo
     };
   };
 
+  // ── BULK HISTORICAL IMPORT ───────────────────────────────────────────────────
+  // Accepts multiple flight log files, merges all pilots across all years,
+  // computes history stats, and upserts everything to aks_flights.
+  const [bulkFiles,       setBulkFiles]       = useState([]);
+  const [bulkParsing,     setBulkParsing]      = useState(false);
+  const [bulkStatus,      setBulkStatus]       = useState([]); // [{name,status,legs}]
+  const [bulkDone,        setBulkDone]         = useState(false);
+  const [bulkUpsertProg,  setBulkUpsertProg]   = useState(null);
+
+  const handleBulkImport = async () => {
+    if(!bulkFiles.length) return;
+    setBulkParsing(true); setBulkDone(false); setBulkStatus([]);
+    const XLSX = await loadXlsx();
+
+    // Parse all files and merge into one pilotFlights object
+    const merged = {}; // username → [flights...]
+    const statusList = [];
+
+    for(const file of bulkFiles) {
+      const entry = {name: file.name, status:'processing', legs:0};
+      setBulkStatus(prev => [...prev.filter(x=>x.name!==file.name), entry]);
+      try {
+        const buf = await file.arrayBuffer();
+        const wb  = XLSX.read(new Uint8Array(buf), {type:'array', cellDates:false});
+        const pf  = parseFlightLogExport(wb, XLSX.utils);
+        let legs  = 0;
+        Object.entries(pf).forEach(([pilot, flights]) => {
+          if(!merged[pilot]) merged[pilot] = [];
+          // Deduplicate by composite key (date + notes + status)
+          const existingKeys = new Set(merged[pilot].map(f=>`${f.date}_${f.notes||''}_${f.startTaxi||''}`));
+          const newFlights = flights.filter(f => !existingKeys.has(`${f.date}_${f.notes||''}_${f.startTaxi||''}`));
+          merged[pilot].push(...newFlights);
+          legs += newFlights.length;
+        });
+        entry.status = 'ok'; entry.legs = legs;
+      } catch(e) {
+        entry.status = 'error'; entry.error = e.message;
+      }
+      setBulkStatus(prev => [...prev.filter(x=>x.name!==file.name), {...entry}]);
+    }
+
+    // Compute history stats from merged dataset
+    try {
+      const hs = computeHistoryStats(merged);
+      await onBulkHistoryComplete(merged, hs);
+    } catch(e) {
+      console.error('History stats failed:', e);
+    }
+
+    // Upsert to aks_flights in background with progress
+    upsertFlightsBatch(merged, (done,total)=>{
+      setBulkUpsertProg({done,total});
+    }).then(n=>{
+      setBulkUpsertProg(null);
+      setBulkDone(true);
+      console.log(`Bulk upsert complete: ${n} rows`);
+    }).catch(e=>console.warn('Bulk upsert error:',e.message));
+
+    setBulkParsing(false);
+  };
+
   const handleFlightLogExport = async () => {
     if(!logFile){setError("Upload the Flight Log Export XLSX first.");return;}
     setParsing(true);setError(null);setPreview(null);
@@ -1767,6 +2025,57 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, lo
             const c=sel.compliance;
             const col=SC[c.status], csc=SC[c.statusWithSched];
             return <div style={{...S.card,border:`2px solid ${col}`,marginBottom:12}}>
+
+              {/* ── HISTORICAL BULK IMPORT ── */}
+              <div style={{background:"rgba(0,184,148,0.06)",borderRadius:8,padding:"14px 16px",
+                marginBottom:16,border:"1px solid rgba(0,184,148,0.2)"}}>
+                <div style={{fontSize:15,fontWeight:700,color:"#00b894",letterSpacing:"0.08em",marginBottom:4}}>
+                  🗂 HISTORICAL BULK IMPORT
+                </div>
+                <div style={{fontSize:13,color:"#5a8a7a",marginBottom:10}}>
+                  Select multiple Flight Log Export files to merge all years at once.
+                  Existing data is never deleted — new records are added on top.
+                </div>
+                <input type="file" multiple accept=".xlsx,.xls"
+                  onChange={e=>setBulkFiles(Array.from(e.target.files))}
+                  style={{display:"block",marginBottom:8,fontSize:13,color:"#9abacb"}}/>
+                {bulkFiles.length>0&&<div style={{fontSize:12,color:"#6a9a7a",marginBottom:8}}>
+                  {bulkFiles.length} file{bulkFiles.length!==1?"s":""} selected:
+                  {bulkFiles.map(f=><span key={f.name} style={{marginLeft:6,color:"#4a8a6a"}}>{f.name.replace('Flight_Log_Export_','').replace('.xlsx','')}</span>)}
+                </div>}
+                <button onClick={handleBulkImport} disabled={!bulkFiles.length||bulkParsing}
+                  style={{padding:"7px 16px",background:bulkFiles.length&&!bulkParsing?"rgba(0,184,148,0.2)":"#1a2a3a",
+                  border:"1px solid rgba(0,184,148,0.4)",borderRadius:5,color:bulkFiles.length&&!bulkParsing?"#00b894":"#3a5a4a",
+                  fontSize:14,fontWeight:700,cursor:bulkFiles.length&&!bulkParsing?"pointer":"default",
+                  fontFamily:"'JetBrains Mono',monospace"}}>
+                  {bulkParsing?"⏳ PROCESSING...":"▶ IMPORT ALL FILES"}
+                </button>
+                {bulkStatus.length>0&&<div style={{marginTop:10,display:"flex",flexDirection:"column",gap:3}}>
+                  {bulkStatus.map(s=>(
+                    <div key={s.name} style={{fontSize:12,display:"flex",gap:8,alignItems:"center"}}>
+                      <span style={{color:s.status==='ok'?"#00b894":s.status==='error'?"#ff4757":"#ffd740"}}>
+                        {s.status==='ok'?"✓":s.status==='error'?"✗":"⏳"}
+                      </span>
+                      <span style={{color:"#7a9ab8"}}>{s.name.replace('Flight_Log_Export_','').replace('.xlsx','')}</span>
+                      {s.status==='ok'&&<span style={{color:"#5a8a6a"}}>{s.legs.toLocaleString()} new rows</span>}
+                      {s.status==='error'&&<span style={{color:"#ff4757"}}>{s.error}</span>}
+                    </div>
+                  ))}
+                </div>}
+                {bulkUpsertProg&&<div style={{marginTop:8}}>
+                  <div style={{fontSize:12,color:"#4a9eff",marginBottom:4}}>
+                    📡 Syncing to Supabase... {bulkUpsertProg.done.toLocaleString()}/{bulkUpsertProg.total.toLocaleString()} rows
+                  </div>
+                  <div style={{height:4,background:"#1e2730",borderRadius:2,overflow:"hidden"}}>
+                    <div style={{height:"100%",background:"#4a9eff",borderRadius:2,
+                      width:`${Math.round(bulkUpsertProg.done/bulkUpsertProg.total*100)}%`}}/>
+                  </div>
+                </div>}
+                {bulkDone&&<div style={{marginTop:8,fontSize:13,color:"#00b894",fontWeight:700}}>
+                  ✓ All files imported. Go to LEGACY tab to view history stats.
+                </div>}
+              </div>
+
               <div style={{fontSize:16,fontWeight:700,color:col,letterSpacing:"0.1em",marginBottom:10}}>
                 ROLLING 8-IN-24 — {(sel.fullName||sel.username||"").toUpperCase()}
               </div>
@@ -8411,6 +8720,367 @@ function WarnPopup({flights,profile,onDismiss}) {
   </div>;
 }
 
+// ── LEGACY SCREEN ─────────────────────────────────────────────────────────────
+function LegacyScreen({ historyStats, historyProgress }) {
+  const [tab, setTab] = useState("overview");
+  const [pilotSearch, setPilotSearch] = useState("");
+  const [showAlumni, setShowAlumni] = useState(false);
+  const [pilotSort, setPilotSort] = useState("legs");
+
+  const fmtH = m => m ? `${(m/60).toFixed(1)}h` : "—";
+  const fmtK = n => n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(n);
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const TODAY = new Date().toISOString().slice(0,10);
+
+  if(historyProgress) return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+      height:"60vh",gap:16}}>
+      <div style={{fontSize:16,color:"#4a9eff",fontWeight:700}}>📡 SAVING TO SUPABASE</div>
+      <div style={{width:300,height:8,background:"#1e2730",borderRadius:4,overflow:"hidden"}}>
+        <div style={{height:"100%",background:"#4a9eff",borderRadius:4,
+          width:`${Math.round(historyProgress.done/historyProgress.total*100)}%`,transition:"width 0.3s"}}/>
+      </div>
+      <div style={{fontSize:14,color:"#7a9ab8"}}>
+        {historyProgress.done.toLocaleString()} / {historyProgress.total.toLocaleString()} rows
+      </div>
+    </div>
+  );
+
+  if(!historyStats) return (
+    <div style={{padding:24,textAlign:"center",color:"#5a7a8a"}}>
+      <div style={{fontSize:20,marginBottom:8}}>🗂 NO HISTORY DATA</div>
+      <div style={{fontSize:14,lineHeight:1.6}}>
+        Upload flight log exports on the IMPORT screen.<br/>
+        After import, career stats and location history will appear here.
+      </div>
+    </div>
+  );
+
+  const TABS = [["overview","OVERVIEW"],["pilots","PILOTS"],["locations","LOCATIONS"],["fleet","FLEET"]];
+
+  const allPilots = Object.values(historyStats.byPilot||{});
+  const activePilots = allPilots.filter(p => (p.daysSince||9999) < 90).sort((a,b)=>b[pilotSort==="legs"?'totalLegs':pilotSort==="hours"?'totalMins':'totalPax']-a[pilotSort==="legs"?'totalLegs':pilotSort==="hours"?'totalMins':'totalPax']);
+  const alumni = allPilots.filter(p => (p.daysSince||9999) >= 90).sort((a,b)=>(b.lastFlight||'').localeCompare(a.lastFlight||''));
+  const filteredActive = activePilots.filter(p => !pilotSearch || p.fullName.toLowerCase().includes(pilotSearch.toLowerCase()) || p.username.includes(pilotSearch.toLowerCase()));
+  const filteredAlumni = alumni.filter(p => !pilotSearch || p.fullName.toLowerCase().includes(pilotSearch.toLowerCase()) || p.username.includes(pilotSearch.toLowerCase()));
+
+  const maxYearLegs = Math.max(...Object.values(historyStats.byYear||{}).map(d=>d.legs), 1);
+  const maxMonthLegs = Math.max(...(historyStats.byMonth||[]).map(d=>d.legs), 1);
+
+  const AKS_PRIMARY = ["JNU","HNH","HNS","SGY","SIT","KTN","PSG","WRG","KAE","KLW","CGA","HYD","AGN","GST","YAK","PEL","ELV","TKE","PTH","FNR","HKB","KXA"];
+  const AKS_SPECIAL = ["PACK","NORR","PYBU","WATE","EXCU"];
+
+  const SC = {red:"#ff4757",orange:"#ff6d00",green:"#5aaa8a",blue:"#4a9eff"};
+
+  return <div style={{padding:"12px 14px 100px"}}>
+    {/* Tab bar */}
+    <div style={{display:"flex",gap:2,marginBottom:16,background:"#0a0e14",borderRadius:6,padding:3}}>
+      {TABS.map(([id,label])=>(
+        <div key={id} onClick={()=>setTab(id)}
+          style={{flex:1,padding:"6px 0",textAlign:"center",fontSize:12,fontWeight:700,
+            letterSpacing:"0.08em",cursor:"pointer",borderRadius:4,
+            background:tab===id?"#1a2a3a":"transparent",
+            color:tab===id?"#e0e8f0":"#5a7a8a"}}>
+          {label}
+        </div>
+      ))}
+    </div>
+
+    {/* ── OVERVIEW ── */}
+    {tab==="overview"&&<div>
+      {/* Big numbers */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:16}}>
+        {[
+          {label:"TOTAL LEGS",    value:historyStats.totalLegs?.toLocaleString(),    color:"#4a9eff"},
+          {label:"BLOCK HOURS",   value:fmtH(historyStats.totalMins),                color:"#00b894"},
+          {label:"PAX CARRIED",   value:historyStats.totalPax?.toLocaleString(),     color:"#ffd740"},
+          {label:"PILOTS EVER",   value:historyStats.uniquePilots?.toString(),       color:"#a29bfe"},
+        ].map(s=>(
+          <div key={s.label} style={{background:"#0a0e14",borderRadius:6,padding:"10px 8px",
+            border:"1px solid #1e2730",textAlign:"center"}}>
+            <div style={{fontSize:11,color:"#5a7a8a",letterSpacing:"0.08em",marginBottom:4}}>{s.label}</div>
+            <div style={{fontSize:22,fontWeight:700,color:s.color}}>{s.value||"—"}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{fontSize:11,color:"#3a5060",marginBottom:16,textAlign:"center"}}>
+        {historyStats.dateRange?.start} → {historyStats.dateRange?.end}
+      </div>
+
+      {/* Year-by-year */}
+      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>YEAR BY YEAR</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",padding:"10px 12px",marginBottom:16}}>
+        {Object.entries(historyStats.byYear||{}).sort((a,b)=>a[0].localeCompare(b[0])).map(([y,d])=>{
+          const pct = d.legs/maxYearLegs;
+          const isCovidYear = y==="2020";
+          return <div key={y} style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+            <span style={{width:36,fontSize:12,color:isCovidYear?"#ff6d00":"#7a9ab8",flexShrink:0}}>{y}</span>
+            <div style={{flex:1,height:14,background:"#1e2730",borderRadius:2,overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${pct*100}%`,background:isCovidYear?"#ff6d0055":"#4a9eff55",borderRadius:2}}/>
+            </div>
+            <span style={{width:60,fontSize:12,color:"#9abacb",textAlign:"right"}}>{d.legs.toLocaleString()}</span>
+            <span style={{width:55,fontSize:12,color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
+            <span style={{width:45,fontSize:12,color:"#5a7a8a",textAlign:"right"}}>{fmtK(d.pax)} pax</span>
+          </div>;
+        })}
+      </div>
+
+      {/* Seasonal */}
+      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>SEASONAL PATTERN</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",padding:"10px 12px",marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"flex-end",gap:4,height:60}}>
+          {(historyStats.byMonth||[]).map((d,i)=>{
+            const pct=d.legs/maxMonthLegs;
+            const isSummer=i>=4&&i<=8;
+            return <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+              <div style={{width:"100%",background:isSummer?"#4a9eff":"#2a4a6a",borderRadius:"2px 2px 0 0",
+                height:`${Math.max(4,pct*52)}px`}}/>
+              <span style={{fontSize:9,color:isSummer?"#4a9eff":"#3a5a6a"}}>{MONTHS[i].slice(0,1)}</span>
+            </div>;
+          })}
+        </div>
+        <div style={{fontSize:11,color:"#3a5060",marginTop:4}}>May–Aug averages 3–4× winter volume</div>
+      </div>
+
+      {/* Top days */}
+      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>TOP 20 DAYS — MOST LEGS</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
+        <div style={{display:"grid",gridTemplateColumns:"95px 55px 60px 55px 55px",gap:4,
+          padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+          <span>DATE</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>BLOCK</span>
+          <span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>PILOTS</span>
+        </div>
+        {(historyStats.topDaysByLegs||[]).map((d,i)=>(
+          <div key={i} style={{display:"grid",gridTemplateColumns:"95px 55px 60px 55px 55px",gap:4,
+            padding:"5px 10px",fontSize:14,borderBottom:i<19?"1px solid #0d1117":"none",
+            background:i%2===0?"#08101e":"#0a1220"}}>
+            <span style={{color:"#b8c8d8"}}>{d.date}</span>
+            <span style={{color:"#4a9eff",fontWeight:700,textAlign:"right"}}>{d.legs}</span>
+            <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
+            <span style={{color:"#ffd740",textAlign:"right"}}>{d.pax}</span>
+            <span style={{color:"#5a7a8a",textAlign:"right"}}>{d.pilots}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Top days by pax */}
+      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>TOP 20 DAYS — MOST PAX</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
+        <div style={{display:"grid",gridTemplateColumns:"95px 55px 60px 55px 55px",gap:4,
+          padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+          <span>DATE</span><span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>BLOCK</span>
+          <span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>PILOTS</span>
+        </div>
+        {(historyStats.topDaysByPax||[]).map((d,i)=>(
+          <div key={i} style={{display:"grid",gridTemplateColumns:"95px 55px 60px 55px 55px",gap:4,
+            padding:"5px 10px",fontSize:14,borderBottom:i<19?"1px solid #0d1117":"none",
+            background:i%2===0?"#08101e":"#0a1220"}}>
+            <span style={{color:"#b8c8d8"}}>{d.date}</span>
+            <span style={{color:"#ffd740",fontWeight:700,textAlign:"right"}}>{d.pax}</span>
+            <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
+            <span style={{color:"#4a9eff",textAlign:"right"}}>{d.legs}</span>
+            <span style={{color:"#5a7a8a",textAlign:"right"}}>{d.pilots}</span>
+          </div>
+        ))}
+      </div>
+    </div>}
+
+    {/* ── PILOTS ── */}
+    {tab==="pilots"&&<div>
+      <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center"}}>
+        <input value={pilotSearch} onChange={e=>setPilotSearch(e.target.value)}
+          placeholder="Search pilot..." style={{flex:1,background:"#0a1018",border:"1px solid #1e2730",
+          borderRadius:5,padding:"6px 10px",color:"#e0e8f0",fontSize:14,fontFamily:"'JetBrains Mono',monospace"}}/>
+        <div style={{display:"flex",gap:4}}>
+          {[["legs","LEGS"],["hours","HRS"],["totalPax","PAX"]].map(([k,l])=>(
+            <div key={k} onClick={()=>setPilotSort(k)} style={{padding:"4px 8px",borderRadius:4,fontSize:11,
+              fontWeight:700,cursor:"pointer",background:pilotSort===k?"#1a2a3a":"transparent",
+              color:pilotSort===k?"#4a9eff":"#5a7a8a",border:"1px solid",borderColor:pilotSort===k?"#4a9eff44":"transparent"}}>
+              {l}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{fontSize:12,color:"#5a7a8a",marginBottom:8}}>{filteredActive.length} active pilots (flown in last 90 days)</div>
+      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
+        {filteredActive.map(p=>(
+          <div key={p.username} style={{background:"#0a0e14",borderRadius:6,padding:"10px 12px",
+            border:"1px solid #1e2730"}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+              <div>
+                <span style={{fontSize:15,fontWeight:700,color:"#e0e8f0"}}>{p.fullName}</span>
+                <span style={{fontSize:11,color:"#3a5060",marginLeft:6}}>{p.username}</span>
+                {p.years?.length>0&&<span style={{fontSize:11,color:"#4a9eff",marginLeft:6}}>{p.years[0]}–{p.years[p.years.length-1]}</span>}
+              </div>
+              <div style={{textAlign:"right",fontSize:12,color:"#5a7a8a"}}>
+                <div>{p.locationCount} locations</div>
+                <div>{p.years?.length||0} years</div>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6}}>
+              {[
+                {l:"LEGS",  v:p.totalLegs?.toLocaleString(), c:"#4a9eff"},
+                {l:"HOURS", v:fmtH(p.totalMins),             c:"#00b894"},
+                {l:"PAX",   v:p.totalPax?.toLocaleString(),  c:"#ffd740"},
+                {l:"CP HRS",v:p.cpMins>0?fmtH(p.cpMins):"—",c:"#a29bfe"},
+              ].map(s=>(
+                <div key={s.l} style={{background:"#060a0f",borderRadius:4,padding:"6px 8px"}}>
+                  <div style={{fontSize:10,color:"#4a5a6a"}}>{s.l}</div>
+                  <div style={{fontSize:16,fontWeight:700,color:s.c}}>{s.v}</div>
+                </div>
+              ))}
+            </div>
+            {Object.keys(p.byType||{}).length>0&&<div style={{marginTop:6,display:"flex",gap:6,flexWrap:"wrap"}}>
+              {Object.entries(p.byType).filter(([t])=>t!=='UNK').map(([t,m])=>(
+                <span key={t} style={{fontSize:11,color:"#6a8a9a",background:"#0d1520",padding:"2px 6px",borderRadius:3}}>
+                  {TAIL_LABEL[t]||t}: {fmtH(m)}
+                </span>
+              ))}
+            </div>}
+            {p.topDests?.length>0&&<div style={{marginTop:5,fontSize:11,color:"#4a6070"}}>
+              Top: {p.topDests.slice(0,6).map(d=>`${d.dest}(${d.n})`).join(" · ")}
+            </div>}
+          </div>
+        ))}
+      </div>
+
+      {/* Alumni */}
+      <div onClick={()=>setShowAlumni(!showAlumni)}
+        style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",padding:"8px 12px",
+          background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",marginBottom:showAlumni?8:0}}>
+        <span style={{fontSize:13,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.08em"}}>
+          ✈ ALUMNI — {filteredAlumni.length} former pilots
+        </span>
+        <span style={{fontSize:14,color:showAlumni?"#5aaa8a":"#4a9eff",marginLeft:4}}>
+          {showAlumni?"▼":"▶"}
+        </span>
+      </div>
+      {showAlumni&&<div style={{display:"flex",flexDirection:"column",gap:4}}>
+        {filteredAlumni.map(p=>(
+          <div key={p.username} style={{background:"#08101e",borderRadius:6,padding:"8px 12px",
+            border:"1px solid #1e2730",opacity:0.7}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <span style={{fontSize:14,fontWeight:700,color:"#8a9ab0"}}>{p.fullName}</span>
+                <span style={{fontSize:11,color:"#3a5060",marginLeft:6}}>{p.username}</span>
+              </div>
+              <div style={{fontSize:11,color:"#3a5060",textAlign:"right"}}>
+                <div>Last: {p.lastFlight||"—"}</div>
+                <div>{p.years?.[0]||"?"}–{p.years?.[p.years.length-1]||"?"}</div>
+              </div>
+            </div>
+            <div style={{fontSize:12,color:"#4a6070",marginTop:4}}>
+              {p.totalLegs?.toLocaleString()} legs · {fmtH(p.totalMins)} · {p.totalPax?.toLocaleString()} pax · {p.locationCount} locations
+            </div>
+          </div>
+        ))}
+      </div>}
+    </div>}
+
+    {/* ── LOCATIONS ── */}
+    {tab==="locations"&&<div>
+      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>PRIMARY ROUTES</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
+        <div style={{display:"grid",gridTemplateColumns:"60px 70px 60px 70px 80px",gap:4,
+          padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+          <span>LOC</span><span style={{textAlign:"right"}}>LEGS</span>
+          <span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span>
+          <span style={{textAlign:"right"}}>PILOTS</span>
+        </div>
+        {(historyStats.destStats||[])
+          .filter(d=>AKS_PRIMARY.includes(d.loc))
+          .sort((a,b)=>b.legs-a.legs)
+          .map((d,i,arr)=>(
+          <div key={d.loc} style={{display:"grid",gridTemplateColumns:"60px 70px 60px 70px 80px",gap:4,
+            padding:"5px 10px",fontSize:14,borderBottom:i<arr.length-1?"1px solid #0d1117":"none",
+            background:i%2===0?"#08101e":"#0a1220"}}>
+            <span style={{color:"#4a9eff",fontWeight:700,fontFamily:"monospace"}}>{d.loc}</span>
+            <span style={{color:"#e0e8f0",textAlign:"right"}}>{d.legs.toLocaleString()}</span>
+            <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
+            <span style={{color:"#ffd740",textAlign:"right"}}>{d.pax.toLocaleString()}</span>
+            <span style={{color:"#5a7a8a",textAlign:"right"}}>{d.pilotCount} pilots</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>SPECIAL OPERATIONS</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
+        <div style={{display:"grid",gridTemplateColumns:"60px 70px 60px 70px 80px",gap:4,
+          padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+          <span>LOC</span><span style={{textAlign:"right"}}>LEGS</span>
+          <span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span>
+          <span style={{textAlign:"right"}}>PILOTS</span>
+        </div>
+        {(historyStats.destStats||[])
+          .filter(d=>!AKS_PRIMARY.includes(d.loc)&&d.loc!=="JNU"&&d.legs>=10)
+          .sort((a,b)=>b.legs-a.legs)
+          .slice(0,20)
+          .map((d,i)=>(
+          <div key={d.loc} style={{display:"grid",gridTemplateColumns:"60px 70px 60px 70px 80px",gap:4,
+            padding:"5px 10px",fontSize:14,borderBottom:i<19?"1px solid #0d1117":"none",
+            background:i%2===0?"#08101e":"#0a1220"}}>
+            <span style={{color:"#a29bfe",fontWeight:700,fontFamily:"monospace"}}>{d.loc}</span>
+            <span style={{color:"#e0e8f0",textAlign:"right"}}>{d.legs.toLocaleString()}</span>
+            <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
+            <span style={{color:"#ffd740",textAlign:"right"}}>{d.pax.toLocaleString()}</span>
+            <span style={{color:"#5a7a8a",textAlign:"right"}}>{d.pilotCount} pilots</span>
+          </div>
+        ))}
+      </div>
+    </div>}
+
+    {/* ── FLEET ── */}
+    {tab==="fleet"&&(()=>{
+      const active  = (historyStats.tailStats||[]).filter(t=>t.active);
+      const retired = (historyStats.tailStats||[]).filter(t=>!t.active);
+      return <div>
+        <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>CURRENT FLEET — LIFETIME STATS</div>
+        <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"90px 70px 60px 60px 85px",gap:4,
+            padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+            <span>TAIL</span><span style={{textAlign:"right"}}>LEGS</span>
+            <span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span><span>FIRST FLIGHT</span>
+          </div>
+          {active.map((t,i)=>(
+            <div key={t.tail} style={{display:"grid",gridTemplateColumns:"90px 70px 60px 60px 85px",gap:4,
+              padding:"5px 10px",fontSize:14,borderBottom:i<active.length-1?"1px solid #0d1117":"none",
+              background:i%2===0?"#08101e":"#0a1220"}}>
+              <span style={{color:"#00b894",fontWeight:700,fontFamily:"monospace"}}>{t.tail}</span>
+              <span style={{color:"#e0e8f0",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
+              <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(t.mins)}</span>
+              <span style={{color:"#ffd740",textAlign:"right"}}>{t.pax.toLocaleString()}</span>
+              <span style={{color:"#4a6070",fontSize:12}}>{t.firstDate}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{fontSize:13,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>RETIRED FLEET — ALUMNI AIRCRAFT</div>
+        <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:"90px 70px 60px 60px 85px 80px",gap:4,
+            padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+            <span>TAIL</span><span style={{textAlign:"right"}}>LEGS</span>
+            <span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span>
+            <span>FIRST</span><span>LAST</span>
+          </div>
+          {retired.sort((a,b)=>b.legs-a.legs).map((t,i)=>(
+            <div key={t.tail} style={{display:"grid",gridTemplateColumns:"90px 70px 60px 60px 85px 80px",gap:4,
+              padding:"5px 10px",fontSize:14,borderBottom:i<retired.length-1?"1px solid #0d1117":"none",
+              background:i%2===0?"#08101e":"#0a1220",opacity:0.7}}>
+              <span style={{color:"#7a9ab8",fontWeight:700,fontFamily:"monospace"}}>{t.tail}</span>
+              <span style={{color:"#b8c8d8",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
+              <span style={{color:"#5a7a8a",textAlign:"right"}}>{fmtH(t.mins)}</span>
+              <span style={{color:"#8a8a60",textAlign:"right"}}>{t.pax.toLocaleString()}</span>
+              <span style={{color:"#3a5060",fontSize:12}}>{t.firstDate}</span>
+              <span style={{color:"#3a5060",fontSize:12}}>{t.lastDate}</span>
+            </div>
+          ))}
+        </div>
+      </div>;
+    })()}
+  </div>;
+}
+
 // ── MAIN ───────────────────────────────────────────────────────────────────────
 const NAV=[
   {id:"fleet", icon:"👥",label:"FLT/DUTY"},
@@ -8422,6 +9092,7 @@ const NAV=[
   {id:"regs",  icon:"§", label:"REGS"},
   {id:"quals", icon:"🎖",label:"QUALS"},
   {id:"stats", icon:"📊",label:"STATS"},
+  {id:"legacy",icon:"🗂",label:"LEGACY"},
   {id:"import",icon:"↑", label:"IMPORT"},
 ];
 
@@ -8452,6 +9123,9 @@ function App() {
   const [showProfile,setShowProfile]=useState(false);
   const [loaded,setLoaded]=useState(false);
   const [dismissed,setDismissed]=useState(new Set());
+  const [historyStats,setHistoryStats]=useState(null);
+  const [historyUploading,setHistoryUploading]=useState(false);
+  const [historyProgress,setHistoryProgress]=useState(null);
 
   useEffect(()=>{
     // Safety net: always load within 5 seconds no matter what
@@ -8477,6 +9151,7 @@ function App() {
       try { if(ra) setRouteAvgs(ra); } catch(e){}
       try { if(ql) setQualsData(ql); } catch(e){}
       sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); }).catch(()=>{});
+      sget(SK.historyStats).then(v=>{ if(v) setHistoryStats(v); }).catch(()=>{});
       setLoaded(true);
       try { if(!p?.name)setShowProfile(true); } catch(e){}
     })
@@ -8595,6 +9270,13 @@ function App() {
     await sset(SK.quals, parsed);
   },[]);
 
+  const onBulkHistoryComplete = useCallback(async(mergedPilotFlights, histStats) => {
+    setHistoryStats(histStats);
+    await sset(SK.historyStats, histStats);
+    // Also update fleetData with the most recent active pilots
+    // (keep existing fleetData, just update history stats — don't overwrite live compliance)
+  }, []);
+
   const importFleet=useCallback(async(pilotMap, newRouteAvgs)=>{
     const newFleet = {...fleetData, ...pilotMap};
     setFleetData(newFleet);
@@ -8625,6 +9307,17 @@ function App() {
       setFleetData(newFleet);
       await sset(SK.fleet, newFleet);
       if(routeAvgs){ setRouteAvgs(routeAvgs); await sset(SK.routes,routeAvgs); }
+      // Compute + save history stats after every fleet import
+      try {
+        const hs = computeHistoryStats(pilotFlights);
+        setHistoryStats(hs);
+        await sset(SK.historyStats, hs);
+      } catch(e){ console.warn('History stats compute failed:', e.message); }
+      // Upsert to aks_flights (non-blocking)
+      upsertFlightsBatch(pilotFlights, (done,total)=>{
+        setHistoryProgress({done,total});
+      }).then(n=>{ setHistoryProgress(null); console.log(`Upserted ${n} rows to aks_flights`); })
+        .catch(e=>console.warn('aks_flights upsert failed:',e.message));
       setScreen('fleet');
     } catch(e){ console.error('Quick import failed:',e); }
   },[fleetData]);
@@ -8732,10 +9425,11 @@ function App() {
     if(s==="fuel")    return <FuelScreen/>;
     if(s==="scan")    return <ScanScreen onFlightsScanned={handleScanned}/>;
     if(s==="crew")    return <CrewScreen crewData={crewData} onSync={syncCrew} onUploadXlsx={uploadCrewXlsx} syncing={crewSyncing} lastSync={crewLastSync} sheetError={crewError} sourceMode={crewSource}/>;
-    if(s==="import")  return <ImportScreen onImport={importFlights} onImportFleet={importFleet} onUploadQuals={uploadQuals} onUploadCrew={uploadCrewXlsx} loaded={loaded}/>;
+    if(s==="import")  return <ImportScreen onImport={importFlights} onImportFleet={importFleet} onUploadQuals={uploadQuals} onUploadCrew={uploadCrewXlsx} onBulkHistoryComplete={onBulkHistoryComplete} loaded={loaded}/>;
     if(s==="regs")    return <RegsScreen/>;
     if(s==="quals")   return <QualsScreen qualsData={qualsData} onUpload={uploadQuals} fleetData={fleetData}/>;
     if(s==="stats")   return <StatsScreen fleetData={fleetData} routeAvgs={routeAvgs}/>;
+    if(s==="legacy")  return <LegacyScreen historyStats={historyStats} historyProgress={historyProgress}/>;
     if(s==="night")   return <NightScreen fleetData={fleetData} nightCurrencyData={nightCurrencyData} onUploadNightXlsx={uploadNightXlsx}/>;
     if(s==="tails")   return <TailsScreen fleetData={fleetData} delayData={delayData} onImportDelays={importDelays} routeAvgs={routeAvgs} wx={wx}/>;
     return <FleetScreen fleetData={fleetData} onUpdateDuty={updateDuty} crewData={crewData}/>;
