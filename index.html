@@ -1905,6 +1905,56 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
   return <div>
     <div style={S.ct}>IMPORT DATA</div>
 
+    {/* ── HISTORICAL BULK IMPORT ── */}
+    <div style={{background:"rgba(0,184,148,0.06)",borderRadius:8,padding:"14px 16px",
+      marginBottom:16,border:"1px solid rgba(0,184,148,0.2)"}}>
+      <div style={{fontSize:15,fontWeight:700,color:"#00b894",letterSpacing:"0.08em",marginBottom:4}}>
+        🗂 HISTORICAL BULK IMPORT
+      </div>
+      <div style={{fontSize:13,color:"#5a8a7a",marginBottom:10}}>
+        Select multiple Flight Log Export files to merge all years at once.
+        New records are added — existing data is never deleted.
+      </div>
+      <input type="file" multiple accept=".xlsx,.xls"
+        onChange={e=>setBulkFiles(Array.from(e.target.files))}
+        style={{display:"block",marginBottom:8,fontSize:13,color:"#9abacb"}}/>
+      {bulkFiles.length>0&&<div style={{fontSize:12,color:"#6a9a7a",marginBottom:8}}>
+        {bulkFiles.length} file{bulkFiles.length!==1?"s":""} selected:
+        {bulkFiles.map(f=><span key={f.name} style={{marginLeft:6,color:"#4a8a6a"}}>{f.name.replace('Flight_Log_Export_','').replace('.xlsx','')}</span>)}
+      </div>}
+      <button onClick={handleBulkImport} disabled={!bulkFiles.length||bulkParsing}
+        style={{padding:"7px 16px",background:bulkFiles.length&&!bulkParsing?"rgba(0,184,148,0.2)":"#1a2a3a",
+        border:"1px solid rgba(0,184,148,0.4)",borderRadius:5,color:bulkFiles.length&&!bulkParsing?"#00b894":"#3a5a4a",
+        fontSize:14,fontWeight:700,cursor:bulkFiles.length&&!bulkParsing?"pointer":"default",
+        fontFamily:"'JetBrains Mono',monospace"}}>
+        {bulkParsing?"⏳ PROCESSING...":"▶ IMPORT ALL FILES"}
+      </button>
+      {bulkStatus.length>0&&<div style={{marginTop:10,display:"flex",flexDirection:"column",gap:3}}>
+        {bulkStatus.map(s=>(
+          <div key={s.name} style={{fontSize:12,display:"flex",gap:8,alignItems:"center"}}>
+            <span style={{color:s.status==='ok'?"#00b894":s.status==='error'?"#ff4757":"#ffd740"}}>
+              {s.status==='ok'?"✓":s.status==='error'?"✗":"⏳"}
+            </span>
+            <span style={{color:"#7a9ab8"}}>{s.name.replace('Flight_Log_Export_','').replace('.xlsx','')}</span>
+            {s.status==='ok'&&<span style={{color:"#5a8a6a"}}>{s.legs.toLocaleString()} new rows</span>}
+            {s.status==='error'&&<span style={{color:"#ff4757"}}>{s.error}</span>}
+          </div>
+        ))}
+      </div>}
+      {bulkUpsertProg&&<div style={{marginTop:8}}>
+        <div style={{fontSize:12,color:"#4a9eff",marginBottom:4}}>
+          📡 Syncing to Supabase... {bulkUpsertProg.done.toLocaleString()}/{bulkUpsertProg.total.toLocaleString()} rows
+        </div>
+        <div style={{height:4,background:"#1e2730",borderRadius:2,overflow:"hidden"}}>
+          <div style={{height:"100%",background:"#4a9eff",borderRadius:2,
+            width:`${Math.round(bulkUpsertProg.done/bulkUpsertProg.total*100)}%`}}/>
+        </div>
+      </div>}
+      {bulkDone&&<div style={{marginTop:8,fontSize:13,color:"#00b894",fontWeight:700}}>
+        ✓ All files imported. Go to 🗂 LEGACY tab to view history stats.
+      </div>}
+    </div>
+
     {/* ── BULK DROP ZONE ── */}
     <div
       onDragOver={e=>{e.preventDefault();setDropping(true);}}
@@ -2025,56 +2075,6 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
             const c=sel.compliance;
             const col=SC[c.status], csc=SC[c.statusWithSched];
             return <div style={{...S.card,border:`2px solid ${col}`,marginBottom:12}}>
-
-              {/* ── HISTORICAL BULK IMPORT ── */}
-              <div style={{background:"rgba(0,184,148,0.06)",borderRadius:8,padding:"14px 16px",
-                marginBottom:16,border:"1px solid rgba(0,184,148,0.2)"}}>
-                <div style={{fontSize:15,fontWeight:700,color:"#00b894",letterSpacing:"0.08em",marginBottom:4}}>
-                  🗂 HISTORICAL BULK IMPORT
-                </div>
-                <div style={{fontSize:13,color:"#5a8a7a",marginBottom:10}}>
-                  Select multiple Flight Log Export files to merge all years at once.
-                  Existing data is never deleted — new records are added on top.
-                </div>
-                <input type="file" multiple accept=".xlsx,.xls"
-                  onChange={e=>setBulkFiles(Array.from(e.target.files))}
-                  style={{display:"block",marginBottom:8,fontSize:13,color:"#9abacb"}}/>
-                {bulkFiles.length>0&&<div style={{fontSize:12,color:"#6a9a7a",marginBottom:8}}>
-                  {bulkFiles.length} file{bulkFiles.length!==1?"s":""} selected:
-                  {bulkFiles.map(f=><span key={f.name} style={{marginLeft:6,color:"#4a8a6a"}}>{f.name.replace('Flight_Log_Export_','').replace('.xlsx','')}</span>)}
-                </div>}
-                <button onClick={handleBulkImport} disabled={!bulkFiles.length||bulkParsing}
-                  style={{padding:"7px 16px",background:bulkFiles.length&&!bulkParsing?"rgba(0,184,148,0.2)":"#1a2a3a",
-                  border:"1px solid rgba(0,184,148,0.4)",borderRadius:5,color:bulkFiles.length&&!bulkParsing?"#00b894":"#3a5a4a",
-                  fontSize:14,fontWeight:700,cursor:bulkFiles.length&&!bulkParsing?"pointer":"default",
-                  fontFamily:"'JetBrains Mono',monospace"}}>
-                  {bulkParsing?"⏳ PROCESSING...":"▶ IMPORT ALL FILES"}
-                </button>
-                {bulkStatus.length>0&&<div style={{marginTop:10,display:"flex",flexDirection:"column",gap:3}}>
-                  {bulkStatus.map(s=>(
-                    <div key={s.name} style={{fontSize:12,display:"flex",gap:8,alignItems:"center"}}>
-                      <span style={{color:s.status==='ok'?"#00b894":s.status==='error'?"#ff4757":"#ffd740"}}>
-                        {s.status==='ok'?"✓":s.status==='error'?"✗":"⏳"}
-                      </span>
-                      <span style={{color:"#7a9ab8"}}>{s.name.replace('Flight_Log_Export_','').replace('.xlsx','')}</span>
-                      {s.status==='ok'&&<span style={{color:"#5a8a6a"}}>{s.legs.toLocaleString()} new rows</span>}
-                      {s.status==='error'&&<span style={{color:"#ff4757"}}>{s.error}</span>}
-                    </div>
-                  ))}
-                </div>}
-                {bulkUpsertProg&&<div style={{marginTop:8}}>
-                  <div style={{fontSize:12,color:"#4a9eff",marginBottom:4}}>
-                    📡 Syncing to Supabase... {bulkUpsertProg.done.toLocaleString()}/{bulkUpsertProg.total.toLocaleString()} rows
-                  </div>
-                  <div style={{height:4,background:"#1e2730",borderRadius:2,overflow:"hidden"}}>
-                    <div style={{height:"100%",background:"#4a9eff",borderRadius:2,
-                      width:`${Math.round(bulkUpsertProg.done/bulkUpsertProg.total*100)}%`}}/>
-                  </div>
-                </div>}
-                {bulkDone&&<div style={{marginTop:8,fontSize:13,color:"#00b894",fontWeight:700}}>
-                  ✓ All files imported. Go to LEGACY tab to view history stats.
-                </div>}
-              </div>
 
               <div style={{fontSize:16,fontWeight:700,color:col,letterSpacing:"0.1em",marginBottom:10}}>
                 ROLLING 8-IN-24 — {(sel.fullName||sel.username||"").toUpperCase()}
