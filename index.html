@@ -1397,6 +1397,7 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, lo
       const ftype     = String(r[col('Flight Type')]||'').trim();
       const fstatus   = String(r[col('Flight Status')]||'').trim();
       const office    = String(r[col('Office')]||'').trim();
+      const coPilotRaw = String(r[col('Co-Pilot')]||'').trim().toLowerCase();
 
       if(!dateStr) continue;
 
@@ -1430,7 +1431,6 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, lo
         ? Math.round(blkHrs*60)
         : calcMin(effectiveStart, effectiveStop);
 
-      const coPilotRaw = String(r[col('Co-Pilot')]||'').trim().toLowerCase();
       const isIOEFlight2 = CHECK_AIRMEN.has(coPilotRaw) && !CHECK_AIRMEN.has(pilot);
       const flightObj = {
         id:uid(), date:dateStr, tailNumber:ac,
