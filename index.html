@@ -1448,6 +1448,8 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
   const [pilotFilter,setPilotFilter]=useState("");
   const [logFile,setLogFile]=useState(null);
   const [rosFile,setRosFile]=useState(null);
+  const [dropping, setDropping]   = useState(false);
+  const [bulkRunning, setBulkRunning] = useState(false);
   const logRef=useRef(), rosRef=useRef(), legRef=useRef();
 
   // (bulk state moved to handleBulkImport block)
