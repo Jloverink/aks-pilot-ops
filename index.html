@@ -329,8 +329,11 @@ async function upsertFlightsBatch(pilotFlights, onProgress) {
   Object.entries(pilotFlights).forEach(([pilot, flights]) => {
     flights.forEach(f => {
       if(f._isCoPilot) return; // skip CA right-seat duplicates — stored once on main pilot
-      // pk = date + pilot + schedOff + origin + dest — globally unique, no year collisions
-      const pk = `${f.date||'0000-00-00'}_${pilot}_${f.schedOff||f.startTaxi||''}_${f.origin||''}_${f.destination||''}`;
+      // pk = Takeflite global Flight ID + pilot — truly unique across all years
+      // Takeflite assigns sequential integers per flight event, never reused
+      const pk = f._takefliteId
+        ? `${f._takefliteId}_${pilot}`
+        : `${f.date||'0000-00-00'}_${pilot}_${f.schedOff||f.startTaxi||''}_${f.origin||''}_${f.destination||''}`;
       rows.push({
         pk,
         flight_id: f.notes || '',
@@ -1699,8 +1702,9 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
       const pax       = parseInt(r[col('Total Pax')])||0;
       const ldgs      = parseInt(r[col('Landings')])||1;
       const vfr       = String(r[col('VFR / IFR')]||'VFR').trim()||'VFR';
-      const flightNo  = String(r[col('Flight No')]||'').trim();
-      const ftype     = String(r[col('Flight Type')]||'').trim();
+      const flightNo    = String(r[col('Flight No')]||'').trim();
+      const takefliteId = String(r[col('Flight ID')]||'').trim(); // global sequential ID
+      const ftype       = String(r[col('Flight Type')]||'').trim();
       const fstatus   = String(r[col('Flight Status')]||'').trim();
       const office    = String(r[col('Office')]||'').trim();
       const coPilotRaw = String(r[col('Co-Pilot')]||'').trim().toLowerCase();
@@ -1747,6 +1751,7 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
         beginHobbs:'', endHobbs:'', hobbsDelta:null,
         grossWeight:'', index:'',
         notes: flightNo,
+        _takefliteId: takefliteId,
         delayCode: String(r[col('Delay Code')]||'').trim() || '',
         fuelUplift: parseFloat(r[col('Fuel Uplift')])||0,
         dutyType: ftype.toLowerCase().includes('charter')?'onDemand':'scheduled',
@@ -8976,6 +8981,9 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
         fontFamily:"'JetBrains Mono',monospace"}}>
         {rebuilding?"⏳ "+rebuildStatus:"📡 REBUILD FROM SUPABASE"}
       </button>
+      <span style={{fontSize:11,color:"#3a5060"}}>
+        (use IMPORT → Bulk Import for most accurate stats)
+      </span>
       {rebuildStatus&&!rebuilding&&<span style={{fontSize:12,color:rebuildStatus.startsWith("✓")?"#00b894":"#ff4757"}}>
         {rebuildStatus}
       </span>}
