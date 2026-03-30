@@ -1794,11 +1794,10 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
         let legs  = 0;
         Object.entries(pf).forEach(([pilot, flights]) => {
           if(!merged[pilot]) merged[pilot] = [];
-          // Deduplicate by composite key (date + notes + status)
-          const existingKeys = new Set(merged[pilot].map(f=>`${f.date}_${f.notes||''}_${f.startTaxi||''}`));
-          const newFlights = flights.filter(f => !existingKeys.has(`${f.date}_${f.notes||''}_${f.startTaxi||''}`));
-          merged[pilot].push(...newFlights);
-          legs += newFlights.length;
+          // No dedup needed — each file covers a unique year, no cross-file duplicates possible.
+          // Supabase upsert handles dedup via primary key on the storage side.
+          merged[pilot].push(...flights);
+          legs += flights.length;
         });
         entry.status = 'ok'; entry.legs = legs;
       } catch(e) {
