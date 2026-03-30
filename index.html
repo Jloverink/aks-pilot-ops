@@ -1714,8 +1714,10 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
       // Determine status by ACTUAL TIMES, not Flight Status field
       const hasStart = !!startT;
       const hasStop  = !!stopT;
-      const isCompleted = hasStart && hasStop;
-      const isEnRoute   = hasStart && !hasStop;
+      // KEY FIX: block_hrs > 0 means the flight is completed even if Stop Time is blank.
+      // Takeflite historical exports often omit Stop Time but always record Block Time Hrs.
+      const isCompleted = (hasStart && hasStop) || (hasStart && blkHrs > 0);
+      const isEnRoute   = hasStart && !hasStop && blkHrs <= 0;
       const isScheduled = !hasStart;
 
       const effectiveStart = startT || schedOff || '';
@@ -1737,7 +1739,8 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
         effectiveStop = schedOn || '';
       }
 
-      const totalMinutes = isCompleted && blkHrs>0
+      // Use actual block hours when available — most reliable source
+      const totalMinutes = blkHrs > 0
         ? Math.round(blkHrs*60)
         : calcMin(effectiveStart, effectiveStop);
 
@@ -8900,7 +8903,7 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
         if(!pilotFlights[pilot]) pilotFlights[pilot] = [];
         pilotFlights[pilot].push({
           date: r.date, tailNumber: r.tail, origin: r.origin, destination: r.destination,
-          trainingType: r.flight_type||'', _status: r.status||'scheduled',
+          trainingType: r.flight_type||'', _status: r.status==='completed'?'completed':r.block_mins>0?'completed':(r.status||'scheduled'),
           startTaxi: r.start_time||'', stopTaxi: r.stop_time||'',
           schedOff: r.sched_off||'', schedOn: r.sched_on||'',
           totalMinutes: r.block_mins||0, pax: String(r.pax||0),
