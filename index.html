@@ -329,7 +329,8 @@ async function upsertFlightsBatch(pilotFlights, onProgress) {
   Object.entries(pilotFlights).forEach(([pilot, flights]) => {
     flights.forEach(f => {
       if(f._isCoPilot) return; // skip CA right-seat duplicates — stored once on main pilot
-      const pk = `${f.date||'0000-00-00'}_${f.notes||f.id||''}_${pilot}`;
+      // pk = date + pilot + schedOff + origin + dest — globally unique, no year collisions
+      const pk = `${f.date||'0000-00-00'}_${pilot}_${f.schedOff||f.startTaxi||''}_${f.origin||''}_${f.destination||''}`;
       rows.push({
         pk,
         flight_id: f.notes || '',
@@ -8863,16 +8864,25 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
   const rebuildFromSupabase = async () => {
     setRebuilding(true); setRebuildStatus("Fetching rows from Supabase...");
     try {
-      // Fetch all rows from aks_flights in pages of 10,000
-      const PAGE = 10000;
+      // Fetch all rows from aks_flights using Range header pagination (1000 rows/page)
+      // Supabase PostgREST caps at 1000 rows per request regardless of limit param
+      const PAGE = 1000;
       let allRows = [], offset = 0, done = false;
       while(!done) {
-        const url = `${SUPA_URL}/rest/v1/aks_flights?apikey=${SUPA_KEY}&select=pilot,date,tail,origin,destination,flight_type,status,start_time,stop_time,sched_off,sched_on,block_mins,pax,landings,vfr_ifr,delay_code,fuel_uplift,co_pilot,is_ioe&order=date.asc&limit=${PAGE}&offset=${offset}`;
-        const res = await fetch(url, {headers:{"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json"}});
-        if(!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+        const url = `${SUPA_URL}/rest/v1/aks_flights?apikey=${SUPA_KEY}&select=pilot,date,tail,origin,destination,flight_type,status,start_time,stop_time,sched_off,sched_on,block_mins,pax,landings,vfr_ifr,delay_code,fuel_uplift,is_ioe&order=date.asc`;
+        const res = await fetch(url, {headers:{
+          "Authorization":`Bearer ${SUPA_KEY}`,
+          "Content-Type":"application/json",
+          "Range":`${offset}-${offset+PAGE-1}`,
+          "Prefer":"count=exact",
+        }});
+        if(!res.ok && res.status !== 206) throw new Error(`Supabase fetch failed: ${res.status}`);
         const rows = await res.json();
         allRows = allRows.concat(rows);
-        setRebuildStatus(`Fetched ${allRows.length.toLocaleString()} rows...`);
+        // Parse total from Content-Range header (e.g. "0-999/52700")
+        const cr = res.headers.get('content-range');
+        const total = cr ? parseInt(cr.split('/')[1])||0 : 0;
+        setRebuildStatus(`Fetched ${allRows.length.toLocaleString()}${total?` of ${total.toLocaleString()}`:''}  rows...`);
         if(rows.length < PAGE) done = true;
         else offset += PAGE;
       }
