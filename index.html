@@ -1773,6 +1773,7 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
   const [bulkStatus,      setBulkStatus]       = useState([]); // [{name,status,legs}]
   const [bulkDone,        setBulkDone]         = useState(false);
   const [bulkUpsertProg,  setBulkUpsertProg]   = useState(null);
+  const [bulkError,       setBulkError]        = useState(null);
 
   const handleBulkImport = async () => {
     if(!bulkFiles.length) return;
@@ -1806,24 +1807,25 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
       setBulkStatus(prev => [...prev.filter(x=>x.name!==file.name), {...entry}]);
     }
 
-    // Compute history stats from merged dataset
-    try {
-      const hs = computeHistoryStats(merged);
-      await onBulkHistoryComplete(merged, hs);
-    } catch(e) {
-      console.error('History stats failed:', e);
-    }
-
-    // Upsert to aks_flights in background with progress
-    upsertFlightsBatch(merged, (done,total)=>{
-      setBulkUpsertProg({done,total});
-    }).then(n=>{
-      setBulkUpsertProg(null);
-      setBulkDone(true);
-      console.log(`Bulk upsert complete: ${n} rows`);
-    }).catch(e=>console.warn('Bulk upsert error:',e.message));
-
     setBulkParsing(false);
+
+    // Defer heavy computation so UI can update first
+    setTimeout(async () => {
+      try {
+        const hs = computeHistoryStats(merged);
+        await onBulkHistoryComplete(merged, hs);
+      } catch(e) {
+        console.error('History stats failed:', e.message);
+      setBulkError('Stats computation failed: '+e.message);
+      }
+      // Upsert to aks_flights in background
+      upsertFlightsBatch(merged, (done,total)=>{
+        setBulkUpsertProg({done,total});
+      }).then(n=>{
+        setBulkUpsertProg(null);
+        setBulkDone(true);
+      }).catch(e=>console.warn('Bulk upsert error:',e.message));
+    }, 100);
   };
 
   const handleFlightLogExport = async () => {
@@ -1955,6 +1957,9 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
       {bulkDone&&<div style={{marginTop:8,fontSize:13,color:"#00b894",fontWeight:700}}>
         ✓ All files imported. Go to 🗂 LEGACY tab to view history stats.
       </div>}
+      {bulkError&&<div style={{marginTop:8,fontSize:12,color:"#ff4757"}}>
+        ⚠ Error: {bulkError}
+      </div>}
     </div>
 
     {/* ── BULK DROP ZONE ── */}
@@ -1964,7 +1969,14 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
       onDrop={e=>{
         e.preventDefault(); setDropping(false);
         const files=[...e.dataTransfer.files].filter(f=>f.name.match(/\.xlsx?$/i));
-        if(files.length) processBulkFiles(files);
+        if(!files.length) return;
+        // If multiple flight log files dropped, route to bulk historical import
+        const flightLogs = files.filter(f=>f.name.toLowerCase().includes('flight_log')||f.name.toLowerCase().includes('flight log'));
+        if(flightLogs.length > 1) {
+          setBulkFiles(flightLogs);
+        } else {
+          processBulkFiles(files);
+        }
       }}
       style={{
         border:`2px dashed ${dropping?"#4a9eff":"#1e2a38"}`,
