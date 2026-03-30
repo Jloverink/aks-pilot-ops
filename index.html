@@ -396,6 +396,112 @@ const TAIL_LABEL = {
 // AKS operating locations for gap analysis
 const AKS_ALL_LOCS = ['JNU','HNH','HNS','SGY','SIT','KTN','PSG','WRG','KAE','KLW','CGA','HYD','AGN','GST','YAK','PEL','ELV','TKE','PTH','FNR','HKB','KXA','PACK','NORR','PYBU'];
 
+
+// ── MERGE HISTORY STATS ───────────────────────────────────────────────────────
+// Merges a new stats object into existing saved stats so uploads accumulate
+// rather than overwrite. Each field is combined additively.
+function mergeHistoryStats(existing, fresh) {
+  if(!existing) return fresh;
+  if(!fresh)    return existing;
+
+  // Totals
+  const out = {
+    generated: new Date().toISOString(),
+    totalLegs: (existing.totalLegs||0) + (fresh.totalLegs||0),
+    totalMins: (existing.totalMins||0) + (fresh.totalMins||0),
+    totalPax:  (existing.totalPax||0)  + (fresh.totalPax||0),
+    dateRange: {
+      start: [existing.dateRange?.start, fresh.dateRange?.start].filter(Boolean).sort()[0],
+      end:   [existing.dateRange?.end,   fresh.dateRange?.end  ].filter(Boolean).sort().pop(),
+    },
+  };
+
+  // byYear — add per year
+  const byYear = {...(existing.byYear||{})};
+  Object.entries(fresh.byYear||{}).forEach(([y,d])=>{
+    if(!byYear[y]) byYear[y]={legs:0,mins:0,pax:0};
+    byYear[y].legs+=d.legs; byYear[y].mins+=d.mins; byYear[y].pax+=d.pax;
+  });
+  out.byYear = byYear;
+
+  // byMonth — add per month
+  out.byMonth = (existing.byMonth||Array(12).fill(null).map(()=>({legs:0,mins:0,pax:0})))
+    .map((m,i)=>{
+      const n=(fresh.byMonth||[])[i]||{legs:0,mins:0,pax:0};
+      return {legs:(m.legs||0)+n.legs, mins:(m.mins||0)+n.mins, pax:(m.pax||0)+n.pax};
+    });
+
+  // topDays — combine lists, re-sort, take top 20
+  const allDaysByLegs = [...(existing.topDaysByLegs||[]), ...(fresh.topDaysByLegs||[])];
+  const dayMap = {};
+  allDaysByLegs.forEach(d=>{ const k=d.date;
+    if(!dayMap[k]) dayMap[k]={...d};
+    else { dayMap[k].legs+=d.legs; dayMap[k].mins+=d.mins; dayMap[k].pax+=d.pax; dayMap[k].pilots=Math.max(dayMap[k].pilots,d.pilots); }
+  });
+  out.topDaysByLegs = Object.values(dayMap).sort((a,b)=>b.legs-a.legs).slice(0,20);
+
+  const allDaysByPax = [...(existing.topDaysByPax||[]), ...(fresh.topDaysByPax||[])];
+  const dayMap2 = {};
+  allDaysByPax.forEach(d=>{ const k=d.date;
+    if(!dayMap2[k]) dayMap2[k]={...d};
+    else { dayMap2[k].legs+=d.legs; dayMap2[k].mins+=d.mins; dayMap2[k].pax+=d.pax; dayMap2[k].pilots=Math.max(dayMap2[k].pilots,d.pilots); }
+  });
+  out.topDaysByPax = Object.values(dayMap2).sort((a,b)=>b.pax-a.pax).slice(0,20);
+
+  // byPilot — merge per pilot
+  const byPilot = {...(existing.byPilot||{})};
+  Object.entries(fresh.byPilot||{}).forEach(([u,d])=>{
+    if(!byPilot[u]) { byPilot[u]={...d}; return; }
+    const e=byPilot[u];
+    e.totalLegs+=d.totalLegs; e.totalMins+=d.totalMins; e.totalPax+=d.totalPax;
+    e.cpMins=(e.cpMins||0)+(d.cpMins||0);
+    e.ioeLegs=(e.ioeLegs||0)+(d.ioeLegs||0);
+    // byType
+    Object.entries(d.byType||{}).forEach(([t,m])=>{ e.byType[t]=(e.byType[t]||0)+m; });
+    // Dates
+    if(!e.firstFlight||d.firstFlight<e.firstFlight) e.firstFlight=d.firstFlight;
+    if(!e.lastFlight ||d.lastFlight >e.lastFlight)  e.lastFlight=d.lastFlight;
+    e.daysSince=e.lastFlight?Math.floor((new Date()-new Date(e.lastFlight))/86400000):9999;
+    // Locations
+    const allLocs=new Set([...(e.uniqueDests||[]),...(d.uniqueDests||[])]);
+    e.uniqueDests=[...allLocs]; e.locationCount=allLocs.size;
+    // Years
+    const allYrs=new Set([...(e.years||[]),...(d.years||[])]);
+    e.years=[...allYrs].sort();
+    // topDests — rebuild from combined destFreq (approximate)
+    const df={};
+    [...(e.topDests||[]),...(d.topDests||[])].forEach(({dest,n})=>{ df[dest]=(df[dest]||0)+n; });
+    e.topDests=Object.entries(df).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([dest,n])=>({dest,n}));
+  });
+  out.byPilot = byPilot;
+  out.uniquePilots = Object.keys(byPilot).length;
+
+  // destStats — merge per location
+  const destMap={};
+  [...(existing.destStats||[]),...(fresh.destStats||[])].forEach(d=>{
+    if(!destMap[d.loc]) { destMap[d.loc]={...d}; return; }
+    const e=destMap[d.loc];
+    e.legs+=d.legs; e.mins+=d.mins; e.pax+=d.pax;
+    e.pilotCount=Math.max(e.pilotCount,d.pilotCount);
+    if(d.firstDate<e.firstDate) e.firstDate=d.firstDate;
+    if(d.lastDate >e.lastDate)  e.lastDate=d.lastDate;
+  });
+  out.destStats=Object.values(destMap).sort((a,b)=>b.legs-a.legs);
+
+  // tailStats — merge per tail
+  const tailMap={};
+  [...(existing.tailStats||[]),...(fresh.tailStats||[])].forEach(d=>{
+    if(!tailMap[d.tail]) { tailMap[d.tail]={...d}; return; }
+    const e=tailMap[d.tail];
+    e.legs+=d.legs; e.mins+=d.mins; e.pax+=d.pax;
+    if(d.firstDate<e.firstDate) e.firstDate=d.firstDate;
+    if(d.lastDate >e.lastDate)  e.lastDate=d.lastDate;
+  });
+  out.tailStats=Object.values(tailMap).sort((a,b)=>b.legs-a.legs);
+
+  return out;
+}
+
 function computeHistoryStats(pilotFlights) {
   const all = [];
   Object.entries(pilotFlights).forEach(([pilot, flights]) => {
@@ -8734,11 +8840,57 @@ function WarnPopup({flights,profile,onDismiss}) {
 }
 
 // ── LEGACY SCREEN ─────────────────────────────────────────────────────────────
-function LegacyScreen({ historyStats, historyProgress }) {
+function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
   const [tab, setTab] = useState("overview");
   const [pilotSearch, setPilotSearch] = useState("");
   const [showAlumni, setShowAlumni] = useState(false);
   const [pilotSort, setPilotSort] = useState("legs");
+  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuildStatus, setRebuildStatus] = useState(null);
+
+  const rebuildFromSupabase = async () => {
+    setRebuilding(true); setRebuildStatus("Fetching rows from Supabase...");
+    try {
+      // Fetch all rows from aks_flights in pages of 10,000
+      const PAGE = 10000;
+      let allRows = [], offset = 0, done = false;
+      while(!done) {
+        const url = `${SUPA_URL}/rest/v1/aks_flights?apikey=${SUPA_KEY}&select=pilot,date,tail,origin,destination,flight_type,status,start_time,stop_time,sched_off,sched_on,block_mins,pax,landings,vfr_ifr,delay_code,fuel_uplift,co_pilot,is_ioe&order=date.asc&limit=${PAGE}&offset=${offset}`;
+        const res = await fetch(url, {headers:{"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json"}});
+        if(!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+        const rows = await res.json();
+        allRows = allRows.concat(rows);
+        setRebuildStatus(`Fetched ${allRows.length.toLocaleString()} rows...`);
+        if(rows.length < PAGE) done = true;
+        else offset += PAGE;
+      }
+      setRebuildStatus(`Computing stats from ${allRows.length.toLocaleString()} rows...`);
+      // Convert aks_flights rows back to pilotFlights format
+      const pilotFlights = {};
+      await new Promise(resolve => setTimeout(resolve, 50)); // yield to UI
+      allRows.forEach(r => {
+        const pilot = r.pilot; if(!pilot) return;
+        if(!pilotFlights[pilot]) pilotFlights[pilot] = [];
+        pilotFlights[pilot].push({
+          date: r.date, tailNumber: r.tail, origin: r.origin, destination: r.destination,
+          trainingType: r.flight_type||'', _status: r.status||'scheduled',
+          startTaxi: r.start_time||'', stopTaxi: r.stop_time||'',
+          schedOff: r.sched_off||'', schedOn: r.sched_on||'',
+          totalMinutes: r.block_mins||0, pax: String(r.pax||0),
+          landings: r.landings||1, flightRules: r.vfr_ifr||'VFR',
+          delayCode: r.delay_code||'', fuelUplift: r.fuel_uplift||0,
+          _isIOE: r.is_ioe||false, notes: '',
+        });
+      });
+      setRebuildStatus('Saving stats...');
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await onRebuildStats(pilotFlights);
+      setRebuildStatus(`✓ Done — ${allRows.length.toLocaleString()} rows, ${Object.keys(pilotFlights).length} pilots`);
+    } catch(e) {
+      setRebuildStatus(`✗ Error: ${e.message}`);
+    }
+    setRebuilding(false);
+  };
 
   const fmtH = m => m ? `${(m/60).toFixed(1)}h` : "—";
   const fmtK = n => n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(n);
@@ -8762,6 +8914,13 @@ function LegacyScreen({ historyStats, historyProgress }) {
   if(!historyStats) return (
     <div style={{padding:24,textAlign:"center",color:"#5a7a8a"}}>
       <div style={{fontSize:20,marginBottom:8}}>🗂 NO HISTORY DATA</div>
+      <div style={{fontSize:14,marginBottom:16}}>Upload flight logs on the IMPORT screen, or rebuild from Supabase if you've already uploaded.</div>
+      <button onClick={rebuildFromSupabase} disabled={rebuilding}
+        style={{padding:"10px 20px",background:"rgba(74,158,255,0.15)",border:"1px solid rgba(74,158,255,0.4)",
+        borderRadius:6,color:"#4a9eff",fontSize:14,fontWeight:700,cursor:rebuilding?"default":"pointer",
+        fontFamily:"'JetBrains Mono',monospace"}}>
+        {rebuilding?rebuildStatus:"📡 REBUILD FROM SUPABASE"}
+      </button>
       <div style={{fontSize:14,lineHeight:1.6}}>
         Upload flight log exports on the IMPORT screen.<br/>
         After import, career stats and location history will appear here.
@@ -8786,6 +8945,20 @@ function LegacyScreen({ historyStats, historyProgress }) {
   const SC = {red:"#ff4757",orange:"#ff6d00",green:"#5aaa8a",blue:"#4a9eff"};
 
   return <div style={{padding:"12px 14px 100px"}}>
+    {/* Rebuild from Supabase */}
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+      <button onClick={rebuildFromSupabase} disabled={rebuilding}
+        style={{padding:"6px 14px",background:rebuilding?"#0a1018":"rgba(74,158,255,0.1)",
+        border:"1px solid rgba(74,158,255,0.3)",borderRadius:5,color:rebuilding?"#4a6070":"#4a9eff",
+        fontSize:12,fontWeight:700,cursor:rebuilding?"default":"pointer",
+        fontFamily:"'JetBrains Mono',monospace"}}>
+        {rebuilding?"⏳ "+rebuildStatus:"📡 REBUILD FROM SUPABASE"}
+      </button>
+      {rebuildStatus&&!rebuilding&&<span style={{fontSize:12,color:rebuildStatus.startsWith("✓")?"#00b894":"#ff4757"}}>
+        {rebuildStatus}
+      </span>}
+    </div>
+
     {/* Tab bar */}
     <div style={{display:"flex",gap:2,marginBottom:16,background:"#0a0e14",borderRadius:6,padding:3}}>
       {TABS.map(([id,label])=>(
@@ -9283,11 +9456,26 @@ function App() {
     await sset(SK.quals, parsed);
   },[]);
 
+  const onRebuildStats = useCallback(async(pilotFlights) => {
+    // Called by LegacyScreen after fetching all rows from aks_flights
+    // Computes fresh stats from complete dataset and saves
+    const hs = computeHistoryStats(pilotFlights);
+    setHistoryStats(hs);
+    await sset(SK.historyStats, hs);
+  }, []);
+
   const onBulkHistoryComplete = useCallback(async(mergedPilotFlights, histStats) => {
-    setHistoryStats(histStats);
-    await sset(SK.historyStats, histStats);
-    // Also update fleetData with the most recent active pilots
-    // (keep existing fleetData, just update history stats — don't overwrite live compliance)
+    // Load existing stats and MERGE — so uploading one year doesn't wipe all others
+    try {
+      const existing = await sget(SK.historyStats);
+      const merged   = mergeHistoryStats(existing, histStats);
+      setHistoryStats(merged);
+      await sset(SK.historyStats, merged);
+    } catch(e) {
+      // Fallback: just save new stats if merge fails
+      setHistoryStats(histStats);
+      await sset(SK.historyStats, histStats);
+    }
   }, []);
 
   const importFleet=useCallback(async(pilotMap, newRouteAvgs)=>{
@@ -9442,7 +9630,7 @@ function App() {
     if(s==="regs")    return <RegsScreen/>;
     if(s==="quals")   return <QualsScreen qualsData={qualsData} onUpload={uploadQuals} fleetData={fleetData}/>;
     if(s==="stats")   return <StatsScreen fleetData={fleetData} routeAvgs={routeAvgs}/>;
-    if(s==="legacy")  return <LegacyScreen historyStats={historyStats} historyProgress={historyProgress}/>;
+    if(s==="legacy")  return <LegacyScreen historyStats={historyStats} historyProgress={historyProgress} onRebuildStats={onRebuildStats}/>;
     if(s==="night")   return <NightScreen fleetData={fleetData} nightCurrencyData={nightCurrencyData} onUploadNightXlsx={uploadNightXlsx}/>;
     if(s==="tails")   return <TailsScreen fleetData={fleetData} delayData={delayData} onImportDelays={importDelays} routeAvgs={routeAvgs} wx={wx}/>;
     return <FleetScreen fleetData={fleetData} onUpdateDuty={updateDuty} crewData={crewData}/>;
