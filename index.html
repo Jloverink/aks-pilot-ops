@@ -1430,6 +1430,7 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, lo
         ? Math.round(blkHrs*60)
         : calcMin(effectiveStart, effectiveStop);
 
+      const coPilotRaw = String(r[col('Co-Pilot')]||'').trim().toLowerCase();
       const isIOEFlight2 = CHECK_AIRMEN.has(coPilotRaw) && !CHECK_AIRMEN.has(pilot);
       const flightObj = {
         id:uid(), date:dateStr, tailNumber:ac,
@@ -1458,15 +1459,7 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, lo
       pilots[pilot].push(flightObj);
 
       // ── Co-pilot time for check airmen ────────────────────────────────────
-      // Only accrue co-pilot time when Flight Type = Training.
-      // Co-Pilot on Scheduled/Charter flights is often a deadheading pilot,
-      // not instruction — Takeflite doesn't distinguish, so we use flight type.
-      const coPilotRaw = String(r[col('Co-Pilot')]||'').trim().toLowerCase();
       const isTrainingFlight = ftype.toLowerCase().includes('train');
-      // Accrue co-pilot time for check airmen when:
-      //   a) Flight type is Training (explicit instruction), OR
-      //   b) CA is right seat AND left-seat pilot is NOT a CA (IOE — revenue flight with trainee PIC)
-      // This blocks CA-on-CA ferry/deadhead but captures IOE which logs as Scheduled in Takeflite.
       const isIOEFlight = CHECK_AIRMEN.has(coPilotRaw) && !CHECK_AIRMEN.has(pilot);
       if(coPilotRaw && coPilotRaw !== pilot && CHECK_AIRMEN.has(coPilotRaw) && (isTrainingFlight || isIOEFlight)){
         if(!pilots[coPilotRaw]) pilots[coPilotRaw] = [];
