@@ -383,19 +383,50 @@ async function upsertFlightsBatch(pilotFlights, onProgress) {
 // ── HISTORY STATS COMPUTATION ─────────────────────────────────────────────────
 // Run after any flight log upload. Computes career/location/fleet stats from
 // all pilot flights in memory and caches to Supabase aks_store.
+// Aircraft type categories — SEP=single engine piston, SET=single engine turboprop, MEP=multi-engine piston
 const TAIL_TYPE_MAP = {
-  // Current fleet
-  'N777DH':'SE','N4794C':'SE','N743KP':'SE','N60TF':'SE','N748KP':'SE','N749KP':'SE',
-  'N721KP':'MET','N722KP':'MET','N726KP':'MET',
-  'N754KP':'MET','N753KP':'MET','N755KP':'MET',
-  'N450KP':'MET','N438JP':'MET','N336JP':'MET','N264KP':'MET','N265KP':'MET',
-  // Historical fleet (best classification)
-  'N750KP':'MET','N746KP':'MET','N1301L':'MET','N208TW':'MET','N265KP':'MET',
-  'N760KP':'SE','N761KP':'SE',
+  // Single Engine Piston — Beaver
+  'N777DH':'SEP','N4794C':'SEP','N743KP':'SEP','N60TF':'SEP',
+  // Single Engine Piston — C206 Amphib
+  'N748KP':'SEP','N749KP':'SEP',
+  // Single Engine Piston — C207/C207A Stationair
+  'N746KP':'SEP','N745KP':'SEP','N1301L':'SEP',
+  // Single Engine Piston — Piper
+  'N8216T':'SEP','N8991N':'SEP',
+  // Single Engine Piston — Cessna 180
+  'N7687K':'SEP',
+  // Single Engine Turboprop — Supervan 900
+  'N754KP':'SET','N753KP':'SET','N755KP':'SET','N750KP':'SET','N450KP':'SET',
+  // Single Engine Turboprop — EX Caravan
+  'N438JP':'SET','N336JP':'SET',
+  // Single Engine Turboprop — Amphib Caravan
+  'N264KP':'SET','N265KP':'SET',
+  // Single Engine Turboprop — Grand Caravan / Caravan
+  'N208TW':'SET','N1229C':'SET','N1229Z':'SET','N1245X':'SET','N32009':'SET',
+  // Single Engine Turboprop — PC-12
+  'N721KP':'SET','N722KP':'SET','N726KP':'SET','N524TW':'SET','N475TW':'SET',
+  // Multi-Engine Piston — Piper Chieftain
+  'N765KP':'MEP',
+};
+const TAIL_DESC = {
+  'N777DH':'DHC-2 Beaver','N4794C':'DHC-2 Beaver','N743KP':'DHC-2 Beaver','N60TF':'DHC-2 Beaver',
+  'N748KP':'C206 Amphib','N749KP':'C206 Amphib',
+  'N746KP':'C207A Stationair','N745KP':'C207 Stationair','N1301L':'C207A Stationair',
+  'N8216T':'PA-32 Lance','N8991N':'PA-32 Cherokee Six','N7687K':'C180J Skywagon',
+  'N765KP':'PA-31-350 Chieftain',
+  'N754KP':'Supervan 900','N753KP':'Supervan 900','N755KP':'Supervan 900',
+  'N750KP':'Supervan 900','N450KP':'Supervan 900',
+  'N438JP':'EX Caravan','N336JP':'EX Caravan',
+  'N264KP':'Amphib Caravan','N265KP':'Amphib Caravan',
+  'N208TW':'Grand Caravan','N1229C':'Grand Caravan (IA)',
+  'N1229Z':'Grand Caravan (IA)','N1245X':'Grand Caravan (IA)','N32009':'C208 Caravan (IA)',
+  'N721KP':'PC-12','N722KP':'PC-12','N726KP':'PC-12',
+  'N524TW':'PC-12/45','N475TW':'PC-12/45',
 };
 const TAIL_LABEL = {
-  'SE':'Single Engine','MET':'Multi-Engine Turbine','MER':'Multi-Engine Recip',
+  'SEP':'Single Engine Piston','SET':'Single Engine Turboprop','MEP':'Multi-Engine Piston',
 };
+
 
 // AKS operating locations for gap analysis
 const AKS_ALL_LOCS = ['JNU','HNH','HNS','SGY','SIT','KTN','PSG','WRG','KAE','KLW','CGA','HYD','AGN','GST','YAK','PEL','ELV','TKE','PTH','FNR','HKB','KXA','PACK','NORR','PYBU'];
@@ -572,19 +603,23 @@ function computeHistoryStats(pilotFlights) {
   const byTail = {};
   comp.forEach(f => {
     if(!f.tailNumber) return;
-    if(!byTail[f.tailNumber]) byTail[f.tailNumber]={legs:0,mins:0,pax:0,firstDate:f.date,lastDate:f.date};
+    if(!byTail[f.tailNumber]) byTail[f.tailNumber]={legs:0,mins:0,pax:0,firstDate:f.date,lastDate:f.date,pilotsArr:[]};
     const d=byTail[f.tailNumber];
     d.legs++; d.mins+=f.totalMinutes||0; d.pax+=parseInt(f.pax)||0;
+    if(!d.pilotsArr.includes(f._pilot)) d.pilotsArr.push(f._pilot);
     if(f.date<d.firstDate) d.firstDate=f.date;
     if(f.date>d.lastDate)  d.lastDate=f.date;
   });
-  const CURRENT_FLEET = new Set(['N721KP','N722KP','N726KP','N754KP','N753KP','N755KP',
-    'N450KP','N438JP','N336JP','N264KP','N265KP','N748KP','N749KP','N777DH','N4794C','N743KP','N60TF']);
+  // Active fleet determined by 1-year gap (see ONE_YEAR_STR below)
+  const ONE_YEAR_AGO = new Date(); ONE_YEAR_AGO.setFullYear(ONE_YEAR_AGO.getFullYear()-1);
+  const ONE_YEAR_STR = ONE_YEAR_AGO.toISOString().slice(0,10);
   const tailStats = Object.entries(byTail).map(([tail,d])=>({
     tail, legs:d.legs, mins:d.mins, pax:d.pax,
     firstDate:d.firstDate, lastDate:d.lastDate,
     type:TAIL_TYPE_MAP[tail]||'?',
-    active: CURRENT_FLEET.has(tail),
+    desc:TAIL_DESC[tail]||tail,
+    pilotCount:d.pilotsArr.length,
+    active: d.lastDate >= ONE_YEAR_STR,
   })).sort((a,b)=>b.legs-a.legs);
 
   // By pilot (career stats)
@@ -652,6 +687,17 @@ function computeHistoryStats(pilotFlights) {
     });
     byPilot[pilot].byYear = pilotByYear;
     byPilot[pilot].topRoutes = Object.values(routeFreq).sort((a,b)=>b.legs-a.legs).slice(0,10);
+    // Per-tail hours breakdown
+    const pilotByTail = {};
+    pComp.forEach(f=>{
+      if(!f.tailNumber) return;
+      if(!pilotByTail[f.tailNumber]) pilotByTail[f.tailNumber]={legs:0,mins:0};
+      pilotByTail[f.tailNumber].legs++;
+      pilotByTail[f.tailNumber].mins += f.totalMinutes||0;
+    });
+    byPilot[pilot].byTailArr = Object.entries(pilotByTail)
+      .map(([t,d])=>({tail:t,legs:d.legs,mins:d.mins,desc:TAIL_DESC[t]||t,type:TAIL_TYPE_MAP[t]||'?'}))
+      .sort((a,b)=>b.mins-a.mins).slice(0,20);
   });
 
   // Pre-compute records for instant display
@@ -1547,7 +1593,8 @@ const PILOT_NAME_MAP = {
   "samt":       "Sam Talarman",
   "schmitts":   "Steven Schmitt",
   "danc":       "Dan Corson",
-  "daves":      "Dave Campbell",
+  "daves":      "Dave Sandberg",
+  "campbell":   "Dave Campbell",
   "greggh":     "Greg Hake",
   // Island Air
   "andrewh":    "Andrew Harrington",
@@ -8991,8 +9038,9 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
   const TABS=[["overview","OVERVIEW"],["records","RECORDS"],["pilots","PILOTS"],["routes","ROUTES"],["fleet","FLEET"]];
   const allPilots   = Object.values(historyStats.byPilot||{});
   const sortKey     = pilotSort==="hours"?"totalMins":pilotSort==="pax"?"totalPax":"totalLegs";
-  const activePilots= allPilots.filter(p=>(p.daysSince||9999)<90).sort((a,b)=>b[sortKey]-a[sortKey]);
-  const alumni      = allPilots.filter(p=>(p.daysSince||9999)>=90).sort((a,b)=>(b.lastFlight||"").localeCompare(a.lastFlight||""));
+  const liveDaysSince = (lf) => !lf ? 9999 : Math.floor((new Date(TODAY)-new Date(lf))/86400000);
+  const activePilots= allPilots.filter(p=>liveDaysSince(p.lastFlight)<90).sort((a,b)=>b[sortKey]-a[sortKey]);
+  const alumni      = allPilots.filter(p=>liveDaysSince(p.lastFlight)>=90).sort((a,b)=>(b.lastFlight||"").localeCompare(a.lastFlight||""));
   const filtActive  = activePilots.filter(p=>!pilotSearch||p.fullName.toLowerCase().includes(pilotSearch.toLowerCase())||p.username.includes(pilotSearch.toLowerCase()));
   const filtAlumni  = alumni.filter(p=>!pilotSearch||p.fullName.toLowerCase().includes(pilotSearch.toLowerCase())||p.username.includes(pilotSearch.toLowerCase()));
   const maxYearLegs = Math.max(...Object.values(historyStats.byYear||{}).map(d=>d.legs),1);
@@ -9051,14 +9099,39 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
             ))}
           </div>
         </>}
-        {Object.keys(p.byType||{}).filter(t=>t!=='UNK').length>0&&<>
-          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>AIRCRAFT TYPE</div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {p.byTailArr?.length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>HOURS BY AIRCRAFT</div>
+          <div style={{background:"#060a0f",borderRadius:6,padding:"8px 10px",marginBottom:12,maxHeight:220,overflowY:"auto"}}>
+            {p.byTailArr.map((t,i)=>(
+              <div key={t.tail} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",
+                borderBottom:i<p.byTailArr.length-1?"1px solid #0d1520":"none",fontSize:12}}>
+                <span style={{width:70,color:"#4a9eff",fontFamily:"monospace",fontWeight:700,flexShrink:0}}>{t.tail}</span>
+                <span style={{flex:1,color:"#6a8a9a",fontSize:11}}>{t.desc}</span>
+                <span style={{color:"#00b894",fontWeight:700,width:44,textAlign:"right"}}>{fmtH(t.mins)}</span>
+                <span style={{color:"#5a7a8a",width:40,textAlign:"right"}}>{t.legs}L</span>
+              </div>
+            ))}
+          </div>
+        </>}
+        {p.byType&&Object.keys(p.byType||{}).filter(t=>t!=='UNK').length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>BY TYPE</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
             {Object.entries(p.byType||{}).filter(([t])=>t!=='UNK').sort((a,b)=>b[1]-a[1]).map(([t,m])=>(
               <div key={t} style={{background:"#060a0f",borderRadius:5,padding:"6px 10px",textAlign:"center"}}>
                 <div style={{fontSize:10,color:"#4a5a6a"}}>{TAIL_LABEL[t]||t}</div>
                 <div style={{fontSize:15,fontWeight:700,color:"#00b894"}}>{fmtH(m)}</div>
               </div>
+            ))}
+          </div>
+        </>}
+        {p.uniqueDests?.length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>
+            ALL LOCATIONS ({p.locationCount})
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+            {p.uniqueDests.sort().map(d=>(
+              <span key={d} style={{background:"#0a1520",borderRadius:3,padding:"2px 7px",fontSize:12,
+                color:"#4a9eff",fontFamily:"monospace",border:"1px solid #1a2a3a"}}>{d}</span>
             ))}
           </div>
         </>}
@@ -9335,34 +9408,35 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
       return <div>
         <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>CURRENT FLEET — LIFETIME STATS</div>
         <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
-          <div style={{display:"grid",gridTemplateColumns:"90px 65px 60px 60px 85px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
-            <span>TAIL</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span><span>SINCE</span>
+          <div style={{display:"grid",gridTemplateColumns:"82px 1fr 60px 55px 55px 50px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+            <span>TAIL</span><span>TYPE</span><span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>PILOTS</span>
           </div>
           {active.map((t,i)=>(
-            <div key={t.tail} style={{display:"grid",gridTemplateColumns:"90px 65px 60px 60px 85px",gap:4,padding:"5px 10px",fontSize:13,
+            <div key={t.tail} style={{display:"grid",gridTemplateColumns:"82px 1fr 60px 55px 55px 50px",gap:4,padding:"5px 10px",fontSize:12,
               borderBottom:i<active.length-1?"1px solid #0d1117":"none",background:i%2===0?"#08101e":"#0a1220"}}>
               <span style={{color:"#00b894",fontWeight:700,fontFamily:"monospace"}}>{t.tail}</span>
-              <span style={{color:"#e0e8f0",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
+              <span style={{color:"#5a8a9a",fontSize:11}}>{t.desc||t.tail}</span>
               <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtHi(t.mins)}</span>
+              <span style={{color:"#e0e8f0",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
               <span style={{color:"#ffd740",textAlign:"right"}}>{t.pax.toLocaleString()}</span>
-              <span style={{color:"#4a6070",fontSize:12}}>{t.firstDate}</span>
+              <span style={{color:"#5a7a8a",textAlign:"right"}}>{t.pilotCount}</span>
             </div>
           ))}
         </div>
         <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>RETIRED FLEET</div>
         <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
-          <div style={{display:"grid",gridTemplateColumns:"90px 65px 60px 60px 75px 75px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
-            <span>TAIL</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>PAX</span><span>FIRST</span><span>LAST</span>
+          <div style={{display:"grid",gridTemplateColumns:"82px 1fr 55px 55px 50px 80px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+            <span>TAIL</span><span>TYPE</span><span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>CREW</span><span>SERVICE</span>
           </div>
           {retired.sort((a,b)=>b.legs-a.legs).map((t,i)=>(
-            <div key={t.tail} style={{display:"grid",gridTemplateColumns:"90px 65px 60px 60px 75px 75px",gap:4,padding:"5px 10px",fontSize:13,
+            <div key={t.tail} style={{display:"grid",gridTemplateColumns:"82px 1fr 55px 55px 50px 80px",gap:4,padding:"5px 10px",fontSize:12,
               borderBottom:i<retired.length-1?"1px solid #0d1117":"none",background:i%2===0?"#08101e":"#0a1220",opacity:0.75}}>
               <span style={{color:"#7a9ab8",fontWeight:700,fontFamily:"monospace"}}>{t.tail}</span>
-              <span style={{color:"#b8c8d8",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
+              <span style={{color:"#4a6a7a",fontSize:11}}>{t.desc||t.tail}</span>
               <span style={{color:"#5a7a8a",textAlign:"right"}}>{fmtHi(t.mins)}</span>
-              <span style={{color:"#8a8a60",textAlign:"right"}}>{t.pax.toLocaleString()}</span>
-              <span style={{color:"#3a5060",fontSize:12}}>{t.firstDate}</span>
-              <span style={{color:"#3a5060",fontSize:12}}>{t.lastDate}</span>
+              <span style={{color:"#b8c8d8",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
+              <span style={{color:"#4a6070",textAlign:"right"}}>{t.pilotCount}</span>
+              <span style={{color:"#3a5060",fontSize:11}}>{t.firstDate?.slice(0,7)}–{t.lastDate?.slice(0,7)}</span>
             </div>
           ))}
         </div>
