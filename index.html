@@ -428,6 +428,22 @@ const TAIL_LABEL = {
 };
 
 
+// Full location names — add unknown charter codes as you identify them
+const LOCATION_NAMES = {
+  'JNU':'Juneau','HNH':'Hoonah','HNS':'Haines','SGY':'Skagway','SIT':'Sitka',
+  'KTN':'Ketchikan','PSG':'Petersburg','WRG':'Wrangell','KAE':'Kake',
+  'KLW':'Klawock','CGA':'Craig','HYD':'Hydaburg','AGN':'Angoon','GST':'Gustavus',
+  'YAK':'Yakutat','PEL':'Pelican','ELV':'Elfin Cove','TKE':'Tenakee Springs',
+  'PTH':'Port Alexander','FNR':'Funter Bay','HKB':'Hawk Inlet','KXA':'Kasaan',
+  'PACK':'Pack Creek','NORR':'Norris Glacier','PYBU':'Pybus Bay','WATE':'Waterfall Resort',
+  'EXCU':'Excursion Inlet','ANAN':'Anan Creek','TAKU':'Taku Inlet','GLAC':'Glacier Bay',
+  'LITU':'Lituya Bay','BARA':'Baranof Warm Springs','DRY':'Dry Bay','HOOD':'Hood Bay',
+  'SITK':'Sitkoh Bay','KOOK':'Kootznahoo Inlet','WIND':'Windfall Island',
+  'WHAL':'Whale Pass','WHIT':'Whitestone Harbor','GULL':'Gull Island',
+  'PORT':'Port Protection','ANCH':'Anchorage','KENA':'Kenai',
+};
+const locName = (code) => LOCATION_NAMES[code] || code;
+
 // AKS operating locations for gap analysis
 const AKS_ALL_LOCS = ['JNU','HNH','HNS','SGY','SIT','KTN','PSG','WRG','KAE','KLW','CGA','HYD','AGN','GST','YAK','PEL','ELV','TKE','PTH','FNR','HKB','KXA','PACK','NORR','PYBU'];
 
@@ -1699,11 +1715,14 @@ const CITY_CODE_MAP = {
 };
 const cityToCode = (s) => {
   if(!s) return "";
-  const up = s.trim().toUpperCase();
-  // Already a code (3-4 letters, no spaces)
-  if(/^[A-Z]{3,4}$/.test(up)) return up;
-  const lo = s.trim().toLowerCase();
-  return (CITY_CODE_MAP[lo] || up.slice(0,4)).toUpperCase();
+  const trimmed = s.trim();
+  const lo = trimmed.toLowerCase();
+  // Check IATA map first
+  if(CITY_CODE_MAP[lo]) return CITY_CODE_MAP[lo];
+  // If it's already a short all-caps code (3-4 letters, no spaces), keep it
+  if(/^[A-Z]{3,4}$/.test(trimmed)) return trimmed;
+  // Otherwise preserve the full Takeflite name — "Corner Bay", "Hasselborg Lake" etc.
+  return trimmed;
 };
 
 // ── IMPORT SCREEN ─────────────────────────────────────────────────────────────
@@ -9295,10 +9314,14 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
             ALL LOCATIONS ({p.locationCount})
           </div>
           <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-            {p.uniqueDests.sort().map(d=>(
-              <span key={d} style={{background:"#0a1520",borderRadius:3,padding:"2px 7px",fontSize:12,
-                color:"#4a9eff",fontFamily:"monospace",border:"1px solid #1a2a3a"}}>{d}</span>
-            ))}
+            {p.uniqueDests.sort((a,b)=>locName(a).localeCompare(locName(b))).map(d=>{
+              const full=LOCATION_NAMES[d];
+              return <span key={d} style={{background:"#0a1520",borderRadius:4,padding:"3px 8px",
+                border:"1px solid #1a2a3a",display:"flex",flexDirection:"column",alignItems:"center",minWidth:60}}>
+                <span style={{fontSize:12,color:"#e0e8f0",fontWeight:600}}>{full||d}</span>
+                {full&&<span style={{fontSize:9,color:"#3a5a7a",fontFamily:"monospace"}}>{d}</span>}
+              </span>;
+            })}
           </div>
         </>}
       </div>
@@ -9342,7 +9365,7 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
           </div>
         ))}
       </div>
-      <div style={{fontSize:11,color:"#3a5060",marginBottom:14,textAlign:"center"}}>
+      <div style={{fontSize:11,color:"#7a8a9a",marginBottom:14,textAlign:"center"}}>
         {historyStats.dateRange?.start} → {historyStats.dateRange?.end}
       </div>
 
@@ -9524,31 +9547,44 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
         ))}
       </div>
       <div onClick={()=>setShowAlumni(!showAlumni)} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",
-        padding:"8px 12px",background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",marginBottom:showAlumni?8:0}}>
-        <span style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.08em"}}>
-          ✈ ALUMNI — {filtAlumni.length} former pilots
+        padding:"10px 14px",background:"linear-gradient(135deg,#1a0a1e,#0d1420)",borderRadius:6,
+        border:"1px solid #7c3aed44",marginBottom:showAlumni?8:0}}>
+        <span style={{fontSize:16,marginRight:2}}>🏅</span>
+        <span style={{fontSize:12,fontWeight:700,color:"#c084fc",letterSpacing:"0.08em"}}>
+          ALUMNI HALL OF FAME — {filtAlumni.length} legends
         </span>
-        <span style={{fontSize:13,color:showAlumni?"#5aaa8a":"#4a9eff",marginLeft:4}}>{showAlumni?"▼":"▶"}</span>
+        <span style={{fontSize:13,color:showAlumni?"#f472b6":"#c084fc",marginLeft:"auto"}}>{showAlumni?"▼":"▶"}</span>
       </div>
       {showAlumni&&<div style={{display:"flex",flexDirection:"column",gap:4}}>
-        {filtAlumni.map(p=>(
-          <div key={p.username} onClick={()=>setSelectedPilot(p)}
-            style={{background:"#08101e",borderRadius:6,padding:"8px 12px",border:"1px solid #1e2730",opacity:0.75,cursor:"pointer"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        {filtAlumni.map((p,ai)=>{
+          const aColors=["#ffd700","#f472b6","#34d399","#c084fc","#fb923c","#38bdf8","#a3e635","#e879f9"];
+          const ac=aColors[ai%aColors.length];
+          return <div key={p.username} onClick={()=>setSelectedPilot(p)}
+            style={{background:"#0a0d14",borderRadius:6,padding:"10px 14px",cursor:"pointer",
+            border:`1px solid ${ac}33`,marginBottom:2}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor=ac+"88"}
+            onMouseLeave={e=>e.currentTarget.style.borderColor=ac+"33"}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
               <div>
-                <span style={{fontSize:13,fontWeight:700,color:"#8a9ab0"}}>{p.fullName}</span>
-                <span style={{fontSize:11,color:"#3a5060",marginLeft:6}}>{p.username}</span>
+                <span style={{fontSize:14,fontWeight:700,color:ac}}>{p.fullName}</span>
+                <span style={{fontSize:11,color:"#5a6a7a",marginLeft:6}}>{p.username}</span>
+                <span style={{fontSize:11,color:"#7a6a4a",marginLeft:6}}>{p.years?.[0]||"?"}–{p.years?.[p.years.length-1]||"?"}</span>
               </div>
-              <div style={{fontSize:11,color:"#3a5060",textAlign:"right"}}>
-                <div>Last: {p.lastFlight||"—"}</div>
-                <div>{p.years?.[0]||"?"}–{p.years?.[p.years.length-1]||"?"}</div>
-              </div>
+              <span style={{fontSize:11,color:"#5a6a7a"}}>last {p.lastFlight||"—"}</span>
             </div>
-            <div style={{fontSize:12,color:"#4a6070",marginTop:4}}>
-              {p.totalLegs?.toLocaleString()} legs · {fmtH(p.totalMins)} · {p.totalPax?.toLocaleString()} pax · {p.locationCount} locations
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6}}>
+              {[{l:"LEGS",v:p.totalLegs?.toLocaleString(),c:"#e2c97e"},
+                {l:"HOURS",v:fmtH(p.totalMins),c:"#34d399"},
+                {l:"PAX",v:p.totalPax?.toLocaleString(),c:"#fb923c"},
+                {l:"LOCATIONS",v:p.locationCount,c:"#c084fc"}].map(s=>(
+                <div key={s.l} style={{background:"#060810",borderRadius:4,padding:"4px 8px"}}>
+                  <div style={{fontSize:9,color:"#4a5a6a"}}>{s.l}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:s.c}}>{s.v}</div>
+                </div>
+              ))}
             </div>
-          </div>
-        ))}
+          </div>;
+        })}
       </div>}
     </div>}
 
@@ -9622,22 +9658,23 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
             </div>;
           })}
         </div>
-        <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>RETIRED FLEET</div>
+        <div style={{fontSize:12,fontWeight:700,color:"#f472b6",letterSpacing:"0.1em",marginBottom:8}}>🏆 HALL OF FAME — RETIRED FLEET</div>
         <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
           <div style={{display:"grid",gridTemplateColumns:"82px 1fr 55px 55px 50px 80px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
             <span>TAIL</span><span>TYPE</span><span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>CREW</span><span>SERVICE</span>
           </div>
-          {retired.sort((a,b)=>b.legs-a.legs).map((t,i)=>(
-            <div key={t.tail} style={{display:"grid",gridTemplateColumns:"82px 1fr 55px 55px 50px 80px",gap:4,padding:"5px 10px",fontSize:12,
-              borderBottom:i<retired.length-1?"1px solid #0d1117":"none",background:i%2===0?"#08101e":"#0a1220",opacity:0.75}}>
-              <span style={{color:"#7a9ab8",fontWeight:700,fontFamily:"monospace"}}>{t.tail}</span>
-              <span style={{color:"#4a6a7a",fontSize:11}}>{t.desc||t.tail}</span>
-              <span style={{color:"#5a7a8a",textAlign:"right"}}>{fmtHi(t.mins)}</span>
-              <span style={{color:"#b8c8d8",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
-              <span style={{color:"#4a6070",textAlign:"right"}}>{t.pilotCount}</span>
-              <span style={{color:"#3a5060",fontSize:11}}>{t.firstDate?.slice(0,7)}–{t.lastDate?.slice(0,7)}</span>
-            </div>
-          ))}
+          {retired.sort((a,b)=>b.legs-a.legs).map((t,i)=>{
+            const hof = i===0?"#ffd700":i===1?"#c084fc":i===2?"#34d399":"#f472b6";
+            return <div key={t.tail} style={{display:"grid",gridTemplateColumns:"82px 1fr 55px 55px 50px 80px",gap:4,padding:"6px 10px",fontSize:12,
+              borderBottom:i<retired.length-1?"1px solid #1a1a2e":"none",background:i<3?"rgba(255,215,0,0.04)":"#0a0d14"}}>
+              <span style={{color:hof,fontWeight:700,fontFamily:"monospace"}}>{t.tail}</span>
+              <span style={{color:"#a08060",fontSize:11}}>{t.desc||t.tail}</span>
+              <span style={{color:"#10b981",textAlign:"right",fontWeight:i<3?700:400}}>{fmtHi(t.mins)}</span>
+              <span style={{color:"#e2c97e",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
+              <span style={{color:"#c084fc",textAlign:"right"}}>{t.pilotCount}</span>
+              <span style={{color:"#7a6a4a",fontSize:11}}>{t.firstDate?.slice(0,7)}–{t.lastDate?.slice(0,7)}</span>
+            </div>;
+          })}
         </div>
       </div>;
     })()}
