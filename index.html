@@ -3348,15 +3348,29 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
     setQuickImporting(false);
   };
 
-  // Track last import time locally so it updates immediately after quick-import
-  const [lastImportTs, setLastImportTs] = React.useState(
-    Object.values(fleetData)[0]?.lastUpdated || null
-  );
-  // Sync when fleetData changes (e.g. after import)
+  // Pull last sync timestamp from aks_store — set by aks_sync.py after each push
+  const [lastImportTs, setLastImportTs] = React.useState(null);
   React.useEffect(()=>{
-    const ts = Object.values(fleetData)[0]?.lastUpdated;
-    if(ts) setLastImportTs(ts);
-  }, [fleetData]);
+    const fetchSyncTs = async () => {
+      try {
+        const res = await fetch(
+          `${SUPA_URL}/rest/v1/aks_store?key=eq.last_sync_time&select=value`,
+          {headers:{"apikey":SUPA_KEY,"Authorization":`Bearer ${SUPA_KEY}`}}
+        );
+        if(res.ok){
+          const rows = await res.json();
+          if(rows?.[0]?.value){
+            const parsed = JSON.parse(rows[0].value);
+            setLastImportTs(parsed.value || parsed);
+          }
+        }
+      } catch(e) {}
+    };
+    fetchSyncTs();
+    // Re-check every 5 minutes
+    const iv = setInterval(fetchSyncTs, 5*60*1000);
+    return () => clearInterval(iv);
+  }, []);
 
   const fmtRelTime = ts => {
     if(!ts) return null;
