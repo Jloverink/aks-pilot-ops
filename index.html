@@ -9739,7 +9739,6 @@ function App() {
         const sinceStr = since.toISOString().slice(0,10);
         const untilStr = until.toISOString().slice(0,10);
 
-        // Fetch recent rows from aks_flights
         const PAGE=1000; let allRows=[], offset=0, done=false;
         while(!done) {
           const url=`${SUPA_URL}/rest/v1/aks_flights?apikey=${SUPA_KEY}`
@@ -9755,7 +9754,6 @@ function App() {
         }
         if(!allRows.length) return;
 
-        // Convert rows → pilotFlights format
         const pilotFlights={};
         allRows.forEach(r=>{
           const pilot=r.pilot; if(!pilot) return;
@@ -9776,7 +9774,6 @@ function App() {
           });
         });
 
-        // Build fleetData with compliance calculations
         const routeAvgs=computeRouteAverages(pilotFlights);
         const pilotMap={};
         Object.entries(pilotFlights).forEach(([u,rawFlights])=>{
@@ -9803,9 +9800,55 @@ function App() {
       }
     };
 
-    runAutoSync(); // run immediately on load
-    const interval=setInterval(runAutoSync, 30*60*1000); // then every 30 min
-    return ()=>clearInterval(interval);
+    // Run immediately on load
+    runAutoSync();
+
+    // Supabase Realtime — instant update when aks_flights changes
+    // Uses the Supabase Realtime websocket API directly (no client lib needed)
+    let ws = null;
+    let wsReady = false;
+    const realtimeUrl = `wss://yulbmiwgdfozgrenfgfk.supabase.co/realtime/v1/websocket?apikey=${SUPA_KEY}&vsn=1.0.0`;
+    try {
+      ws = new WebSocket(realtimeUrl);
+      ws.onopen = () => {
+        wsReady = true;
+        // Subscribe to aks_flights INSERT/UPDATE events
+        ws.send(JSON.stringify({
+          topic: "realtime:public:aks_flights",
+          event: "phx_join",
+          payload: { config: { broadcast: { self: false }, presence: { key: "" } } },
+          ref: "1"
+        }));
+        console.log('[AutoSync] Realtime connected — instant updates active');
+      };
+      ws.onmessage = (msg) => {
+        try {
+          const data = JSON.parse(msg.data);
+          // Heartbeat — respond to keep connection alive
+          if(data.event === "heartbeat") {
+            ws.send(JSON.stringify({topic:"phoenix",event:"heartbeat",payload:{},ref:"hb"}));
+            return;
+          }
+          // Data change event — trigger sync
+          if(data.event === "INSERT" || data.event === "UPDATE") {
+            console.log('[AutoSync] Realtime event — refreshing...');
+            runAutoSync();
+          }
+        } catch(e) {}
+      };
+      ws.onerror = () => console.warn('[AutoSync] Realtime WS error — falling back to polling');
+      ws.onclose = () => { wsReady = false; };
+    } catch(e) {
+      console.warn('[AutoSync] WebSocket not available:', e.message);
+    }
+
+    // 30-min polling fallback (catches any missed realtime events)
+    const interval = setInterval(runAutoSync, 30*60*1000);
+
+    return () => {
+      clearInterval(interval);
+      if(ws && wsReady) try { ws.close(); } catch(e) {}
+    };
   },[loaded]);
 
   const comp=getCompliance(flights,profile.defaultDutyType,duties);
