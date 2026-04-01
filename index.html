@@ -9722,6 +9722,8 @@ function App() {
   const [showProfile,setShowProfile]=useState(false);
   const [loaded,setLoaded]=useState(false);
   const [dismissed,setDismissed]=useState(new Set());
+  const [autoSyncing,setAutoSyncing]=useState(false);
+  const [lastAutoSync,setLastAutoSync]=useState(null);
   const [historyStats,setHistoryStats]=useState(null);
   const [historyUploading,setHistoryUploading]=useState(false);
   const [historyProgress,setHistoryProgress]=useState(null);
@@ -9760,6 +9762,89 @@ function App() {
       setLoaded(true);
     });
   },[]);
+
+  // ── AUTO LIVE SYNC FROM AKS_FLIGHTS ────────────────────────────────────────
+  // Fetches last 4 days from aks_flights every 30 min → rebuilds fleetData.
+  // Keeps FLT/DUTY current automatically — no manual imports needed.
+  useEffect(() => {
+    if(!loaded) return;
+
+    const runAutoSync = async () => {
+      try {
+        const today = new Date();
+        const since = new Date(today); since.setDate(since.getDate()-2);
+        const until = new Date(today); until.setDate(until.getDate()+2);
+        const sinceStr = since.toISOString().slice(0,10);
+        const untilStr = until.toISOString().slice(0,10);
+
+        // Fetch recent rows from aks_flights
+        const PAGE=1000; let allRows=[], offset=0, done=false;
+        while(!done) {
+          const url=`${SUPA_URL}/rest/v1/aks_flights?apikey=${SUPA_KEY}`
+            +`&select=pilot,date,tail,origin,destination,flight_type,status,`
+            +`start_time,stop_time,sched_off,sched_on,block_mins,pax,landings,`
+            +`vfr_ifr,delay_code,co_pilot,is_ioe`
+            +`&date=gte.${sinceStr}&date=lte.${untilStr}&order=date.asc`;
+          const res=await fetch(url,{headers:{"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json","Range":`${offset}-${offset+PAGE-1}`}});
+          if(!res.ok&&res.status!==206) break;
+          const rows=await res.json();
+          allRows=allRows.concat(rows);
+          if(rows.length<PAGE) done=true; else offset+=PAGE;
+        }
+        if(!allRows.length) return;
+
+        // Convert rows → pilotFlights format
+        const pilotFlights={};
+        allRows.forEach(r=>{
+          const pilot=r.pilot; if(!pilot) return;
+          if(!pilotFlights[pilot]) pilotFlights[pilot]=[];
+          const bm=r.block_mins||0, st=r.start_time||'', sp=r.stop_time||'';
+          const status=r.status==='completed'?'completed':bm>0?'completed':st?'enroute':'scheduled';
+          pilotFlights[pilot].push({
+            id:`af_${r.date}_${pilot}_${r.sched_off||st||Math.random()}`,
+            date:r.date, tailNumber:r.tail||'', origin:r.origin||'',
+            destination:r.destination||'', pax:String(r.pax||0),
+            startTaxi:st, stopTaxi:sp, schedOff:r.sched_off||'', schedOn:r.sched_on||'',
+            totalMinutes:bm, landings:r.landings||1,
+            flightRules:r.vfr_ifr||'VFR', delayCode:r.delay_code||'',
+            trainingType:r.flight_type||'', notes:'', dutyType:'scheduled',
+            _status:status, _isIOE:r.is_ioe||false,
+            beginHobbs:'', endHobbs:'', hobbsDelta:null, grossWeight:'',
+            nightLandings:0, ifCheck:false,
+          });
+        });
+
+        // Build fleetData with compliance calculations
+        const routeAvgs=computeRouteAverages(pilotFlights);
+        const pilotMap={};
+        Object.entries(pilotFlights).forEach(([u,rawFlights])=>{
+          const flights=rawFlights.map(f=>{
+            if(f._status!=='scheduled'||f.totalMinutes>0||(f.schedOff&&f.schedOn)) return f;
+            const est=estimateLegMins(routeAvgs,f.tailNumber,f.origin,f.destination);
+            return est?{...f,totalMinutes:est.avg,_estimated:true}:f;
+          });
+          pilotMap[u]={
+            username:u, fullName:PILOT_NAME_MAP[u]||u, office:pilotCompany(u),
+            flights, lastUpdated:new Date().toISOString(),
+            completed:flights.filter(f=>f._status==='completed'),
+            enroute:  flights.filter(f=>f._status==='enroute'),
+            scheduled:flights.filter(f=>f._status==='scheduled'),
+            compliance:computeFleetCompliance(flights),
+          };
+        });
+
+        setFleetData(prev=>({...prev,...pilotMap}));
+        setRouteAvgs(routeAvgs);
+        console.log(`[AutoSync] ${allRows.length} rows, ${Object.keys(pilotMap).length} pilots — ${new Date().toLocaleTimeString()}`);
+      } catch(e) {
+        console.warn('[AutoSync] failed:', e.message);
+      }
+    };
+
+    runAutoSync(); // run immediately on load
+    const interval=setInterval(runAutoSync, 30*60*1000); // then every 30 min
+    return ()=>clearInterval(interval);
+  },[loaded]);
 
   const comp=getCompliance(flights,profile.defaultDutyType,duties);
   const curMins=profile.defaultDutyType==="onDemand"?comp.rolling24:comp.todayMin;
