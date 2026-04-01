@@ -1725,6 +1725,63 @@ const cityToCode = (s) => {
   return trimmed;
 };
 
+// ── ROUTE AVERAGING (global — used by ImportScreen and auto-sync) ──────────────
+  // ── Route average block times (tail+route → avg mins) ────────────────────────
+const computeRouteAverages = (pilots) => {
+  const tailRoute = {}; // `tail|orig→dest` → [mins,...]
+  const routeOnly = {}; // `orig→dest` → [mins,...]
+
+  const schedByRoute = {}; // collect sched durations at import time (UTC-safe)
+
+  Object.values(pilots).forEach(flights => {
+  flights.filter(f=>f._status==="completed"&&f.totalMinutes>0&&f.totalMinutes<300).forEach(f=>{
+    const orig=f.origin||'', dest=f.destination||'', tail=f.tailNumber||'';
+    if(!orig||!dest||orig===dest) return;
+    const trKey=`${tail}|${orig}→${dest}`;
+    const rKey=`${orig}→${dest}`;
+    if(!tailRoute[trKey]) tailRoute[trKey]={tail,orig,dest,times:[]};
+    tailRoute[trKey].times.push(f.totalMinutes);
+    if(!routeOnly[rKey]) routeOnly[rKey]={orig,dest,times:[]};
+    routeOnly[rKey].times.push(f.totalMinutes);
+    // Collect scheduled durations — computed at parse time in UTC context
+    if(f._schedDurMins>0 && f._schedDurMins<300) {
+      if(!schedByRoute[rKey]) schedByRoute[rKey]=[];
+      schedByRoute[rKey].push(f._schedDurMins);
+    }
+  });
+  });
+
+  const avg = (arr) => Math.round(arr.reduce((s,n)=>s+n,0)/arr.length);
+  const result = { byTailRoute:{}, byRoute:{} };
+  Object.entries(tailRoute).forEach(([k,v])=>{
+  result.byTailRoute[k]={tail:v.tail,orig:v.orig,dest:v.dest,
+    avg:avg(v.times),min:Math.min(...v.times),max:Math.max(...v.times),n:v.times.length};
+  });
+  Object.entries(routeOnly).forEach(([k,v])=>{
+  const sched = schedByRoute[k]||[];
+  result.byRoute[k]={orig:v.orig,dest:v.dest,
+    avg:avg(v.times),min:Math.min(...v.times),max:Math.max(...v.times),n:v.times.length,
+    schedAvg: sched.length>=3 ? avg(sched) : null,
+    schedN:   sched.length};
+  });
+  return result;
+};
+
+// Look up best estimated block time for a leg
+const estimateLegMins = (routeAvgs, tail, orig, dest) => {
+  if(!routeAvgs||!orig||!dest) return null;
+  const trKey=`${tail}|${orig}→${dest}`;
+  if(routeAvgs.byTailRoute[trKey]) return routeAvgs.byTailRoute[trKey];
+  const rKey=`${orig}→${dest}`;
+  if(routeAvgs.byRoute[rKey]) return {...routeAvgs.byRoute[rKey], tail:null};
+  return null;
+};
+
+// ── Rolling 8-in-24 from real timestamps ────────────────────────────────────
+
+// ── BULK HISTORICAL IMPORT ───────────────────────────────────────────────────
+// Accepts multiple flight log files, merges all pilots across all years,
+// computes history stats, and upserts everything to aks_flights.
 // ── IMPORT SCREEN ─────────────────────────────────────────────────────────────
 function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, onBulkHistoryComplete, loaded }) {
   const [source,setSource]=useState("flightlog");
@@ -1964,101 +2021,6 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
     return pilots;
   };
 
-  // ── Route average block times (tail+route → avg mins) ────────────────────────
-  const computeRouteAverages = (pilots) => {
-    const tailRoute = {}; // `tail|orig→dest` → [mins,...]
-    const routeOnly = {}; // `orig→dest` → [mins,...]
-
-    const schedByRoute = {}; // collect sched durations at import time (UTC-safe)
-
-    Object.values(pilots).forEach(flights => {
-      flights.filter(f=>f._status==="completed"&&f.totalMinutes>0&&f.totalMinutes<300).forEach(f=>{
-        const orig=f.origin||'', dest=f.destination||'', tail=f.tailNumber||'';
-        if(!orig||!dest||orig===dest) return;
-        const trKey=`${tail}|${orig}→${dest}`;
-        const rKey=`${orig}→${dest}`;
-        if(!tailRoute[trKey]) tailRoute[trKey]={tail,orig,dest,times:[]};
-        tailRoute[trKey].times.push(f.totalMinutes);
-        if(!routeOnly[rKey]) routeOnly[rKey]={orig,dest,times:[]};
-        routeOnly[rKey].times.push(f.totalMinutes);
-        // Collect scheduled durations — computed at parse time in UTC context
-        if(f._schedDurMins>0 && f._schedDurMins<300) {
-          if(!schedByRoute[rKey]) schedByRoute[rKey]=[];
-          schedByRoute[rKey].push(f._schedDurMins);
-        }
-      });
-    });
-
-    const avg = (arr) => Math.round(arr.reduce((s,n)=>s+n,0)/arr.length);
-    const result = { byTailRoute:{}, byRoute:{} };
-    Object.entries(tailRoute).forEach(([k,v])=>{
-      result.byTailRoute[k]={tail:v.tail,orig:v.orig,dest:v.dest,
-        avg:avg(v.times),min:Math.min(...v.times),max:Math.max(...v.times),n:v.times.length};
-    });
-    Object.entries(routeOnly).forEach(([k,v])=>{
-      const sched = schedByRoute[k]||[];
-      result.byRoute[k]={orig:v.orig,dest:v.dest,
-        avg:avg(v.times),min:Math.min(...v.times),max:Math.max(...v.times),n:v.times.length,
-        schedAvg: sched.length>=3 ? avg(sched) : null,
-        schedN:   sched.length};
-    });
-    return result;
-  };
-
-  // Look up best estimated block time for a leg
-  const estimateLegMins = (routeAvgs, tail, orig, dest) => {
-    if(!routeAvgs||!orig||!dest) return null;
-    const trKey=`${tail}|${orig}→${dest}`;
-    if(routeAvgs.byTailRoute[trKey]) return routeAvgs.byTailRoute[trKey];
-    const rKey=`${orig}→${dest}`;
-    if(routeAvgs.byRoute[rKey]) return {...routeAvgs.byRoute[rKey], tail:null};
-    return null;
-  };
-
-  // ── Rolling 8-in-24 from real timestamps ────────────────────────────────────
-  const computeFleetCompliance = (flights) => {
-    const completed = flights.filter(f=>f._status==='completed'&&f.totalMinutes>0);
-    const enroute   = flights.filter(f=>f._status==='enroute');
-    const scheduled = flights.filter(f=>f._status==='scheduled');
-    if(!completed.length && !enroute.length) return {used:0, usedWithSched:0, remaining:480, status:'green', enroute:0, scheduled:0};
-
-    // Sort by date+time
-    const sorted = [...completed].sort((a,b)=>
-      (a.date+a.startTaxi).localeCompare(b.date+b.startTaxi));
-
-    // If no completed flights (only enroute/scheduled), used=0
-    let used = 0;
-    if(sorted.length) {
-      const lastFlight = sorted[sorted.length-1];
-      const lastDT = lastFlight.date+'T'+(lastFlight.startTaxi||'00:00');
-      const windowStart = new Date(new Date(lastDT).getTime() - 24*60*60*1000);
-      const inWindow = sorted.filter(f=>{
-        const ft = new Date(f.date+'T'+(f.startTaxi||'00:00'));
-        return ft >= windowStart;
-      });
-      used = inWindow.reduce((s,f)=>s+f.totalMinutes,0);
-    }
-
-    // Add en-route time (started but not landed)
-    const enrouteMin = enroute.reduce((s,f)=>s+(f.totalMinutes||30),0);
-
-    // Add scheduled time
-    const schedMin = scheduled.reduce((s,f)=>s+(f.totalMinutes||0),0);
-    const usedWithSched = used + enrouteMin + schedMin;
-
-    const status = used>=480?'red':used>=390?'orange':used>=300?'yellow':'green';
-    const statusWithSched = usedWithSched>=480?'red':usedWithSched>=390?'orange':usedWithSched>=300?'yellow':'green';
-    return {
-      used, usedWithSched, remaining:Math.max(0,480-used),
-      remainingWithSched:Math.max(0,480-usedWithSched),
-      status, statusWithSched,
-      enroute:enrouteMin, scheduled:schedMin,
-    };
-  };
-
-  // ── BULK HISTORICAL IMPORT ───────────────────────────────────────────────────
-  // Accepts multiple flight log files, merges all pilots across all years,
-  // computes history stats, and upserts everything to aks_flights.
   const [bulkFiles,       setBulkFiles]       = useState([]);
   const [bulkParsing,     setBulkParsing]      = useState(false);
   const [bulkStatus,      setBulkStatus]       = useState([]); // [{name,status,legs}]
