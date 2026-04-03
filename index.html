@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+08:45 4/3/2026<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
@@ -9768,12 +9768,15 @@ function App() {
         if(!allRows.length) return;
 
         const pilotFlights={};
+        // Check airmen who receive co-pilot credit on training flights
+        const CHECK_AIRMEN_SYNC = new Set(["danc","patrickf","greggh","seank"]);
+
         allRows.forEach(r=>{
           const pilot=r.pilot; if(!pilot) return;
           if(!pilotFlights[pilot]) pilotFlights[pilot]=[];
           const bm=r.block_mins||0, st=r.start_time||'', sp=r.stop_time||'';
           const status=r.status==='completed'?'completed':bm>0?'completed':st?'enroute':'scheduled';
-          pilotFlights[pilot].push({
+          const flightObj = {
             id:`af_${r.date}_${pilot}_${r.sched_off||st||Math.random()}`,
             date:r.date, tailNumber:r.tail||'', origin:r.origin||'',
             destination:r.destination||'', pax:String(r.pax||0),
@@ -9784,7 +9787,20 @@ function App() {
             _status:status, _isIOE:r.is_ioe||false,
             beginHobbs:'', endHobbs:'', hobbsDelta:null, grossWeight:'',
             nightLandings:0, ifCheck:false,
-          });
+          };
+          pilotFlights[pilot].push(flightObj);
+
+          // Credit co-pilot time if they are a check airman on a training flight
+          const cop = (r.co_pilot||'').trim().toLowerCase();
+          const isTraining = (r.flight_type||'').toLowerCase().includes('train');
+          if(cop && cop !== pilot && CHECK_AIRMEN_SYNC.has(cop) && isTraining && bm > 0) {
+            if(!pilotFlights[cop]) pilotFlights[cop]=[];
+            pilotFlights[cop].push({
+              ...flightObj,
+              id:`af_${r.date}_${cop}_cop_${r.sched_off||st||Math.random()}`,
+              _isCoPilot: true,
+            });
+          }
         });
 
         const routeAvgs=computeRouteAverages(pilotFlights);
