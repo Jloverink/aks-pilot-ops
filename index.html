@@ -11,6 +11,7 @@
   <meta name="apple-mobile-web-app-title" content="AKS Ops"/>
   <meta name="theme-color" content="#080b0f"/>
   <title>AKS · Pilot Ops</title>
+  <link rel="preload" href="./beaver.mp4" as="video" type="video/mp4"/>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     body { background: #080b0f; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
@@ -9705,7 +9706,13 @@ function App() {
 
   useEffect(()=>{
     // Safety net: always load within 5 seconds no matter what
+    const _startTime = Date.now();
     const fallbackTimer = setTimeout(()=>setLoaded(true), 5000);
+    const _minDelay = (cb) => {
+      const elapsed = Date.now() - _startTime;
+      const remaining = Math.max(0, 2500 - elapsed);
+      setTimeout(cb, remaining);
+    };
 
     Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)])
     .then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
@@ -9728,13 +9735,15 @@ function App() {
       try { if(ql) setQualsData(ql); } catch(e){}
       sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); }).catch(()=>{});
       sget(SK.historyStats).then(v=>{ if(v) setHistoryStats(v); }).catch(()=>{});
-      setLoaded(true);
-      try { if(!p?.name)setShowProfile(true); } catch(e){}
+      _minDelay(()=>{
+        setLoaded(true);
+        try { if(!p?.name)setShowProfile(true); } catch(e){}
+      });
     })
     .catch(err=>{
       clearTimeout(fallbackTimer);
       console.error('Storage load error:', err);
-      setLoaded(true);
+      _minDelay(()=>setLoaded(true));
     });
   },[]);
 
