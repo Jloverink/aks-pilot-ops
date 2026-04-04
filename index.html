@@ -387,7 +387,7 @@ async function upsertFlightsBatch(pilotFlights, onProgress) {
 // Aircraft type categories — SEP=single engine piston, SET=single engine turboprop, MEP=multi-engine piston
 const TAIL_TYPE_MAP = {
   // Single Engine Piston — Beaver
-  'N777DH':'SEP','N4794C':'SEP','N743KP':'SEP',
+  'N777DH':'SEP','N4794C':'SEP','N743KP':'SEP','N60TF':'SEP',
   // Single Engine Piston — C206 Amphib
   'N748KP':'SEP','N749KP':'SEP',
   // Single Engine Piston — C207/C207A Stationair
@@ -405,15 +405,15 @@ const TAIL_TYPE_MAP = {
   // Single Engine Turboprop — Grand Caravan / Caravan
   'N208TW':'SET','N1229C':'SET','N1229Z':'SET','N1245X':'SET','N32009':'SET',
   // Single Engine Turboprop — PC-12
-  'N721KP':'SET','N722KP':'SET','N726KP':'SET','N840AG':'SET','N524TW':'SET','N475TW':'SET',
+  'N721KP':'SET','N722KP':'SET','N726KP':'SET','N524TW':'SET','N475TW':'SET',
   // Multi-Engine Piston — Piper Chieftain
   'N765KP':'MEP',
 };
 const TAIL_DESC = {
-  'N777DH':'DHC-2 Beaver','N4794C':'DHC-2 Beaver','N743KP':'DHC-2 Beaver','N60TF':'DHC-2 Beaver (EF)',
+  'N777DH':'DHC-2 Beaver','N4794C':'DHC-2 Beaver','N743KP':'DHC-2 Beaver','N60TF':'DHC-2 Beaver',
   'N748KP':'C206 Amphib','N749KP':'C206 Amphib',
   'N746KP':'C207A Stationair','N745KP':'C207 Stationair','N1301L':'C207A Stationair',
-  'N8216T':'PA-32 Saratoga','N8991N':'PA-32 Cherokee Six','N7687K':'C180J Skywagon',
+  'N8216T':'PA-32 Lance','N8991N':'PA-32 Cherokee Six','N7687K':'C180J Skywagon',
   'N765KP':'PA-31-350 Chieftain',
   'N754KP':'Supervan 900','N753KP':'Supervan 900','N755KP':'Supervan 900',
   'N750KP':'Supervan 900','N450KP':'Supervan 900',
@@ -421,7 +421,7 @@ const TAIL_DESC = {
   'N264KP':'Amphib Caravan','N265KP':'Amphib Caravan',
   'N208TW':'Grand Caravan','N1229C':'Grand Caravan (IA)',
   'N1229Z':'Grand Caravan (IA)','N1245X':'Grand Caravan (IA)','N32009':'C208 Caravan (IA)',
-  'N721KP':'PC-12','N722KP':'PC-12','N726KP':'PC-12','N840AG':'PC-12/45',
+  'N721KP':'PC-12','N722KP':'PC-12','N726KP':'PC-12',
   'N524TW':'PC-12/45','N475TW':'PC-12/45',
 };
 const TAIL_LABEL = {
@@ -667,45 +667,15 @@ function computeHistoryStats(pilotFlights) {
     const ioeLegs    = pComp.filter(f=>f._isIOE);
     const uniqueDests= [...new Set(pComp.map(f=>f.destination).filter(Boolean))];
 
-    // Longest single leg
-    const longestLeg = pComp.length ? pComp.reduce((mx,f)=>(f.totalMinutes||0)>(mx.totalMinutes||0)?f:mx, pComp[0]) : null;
-    // Busiest day by legs
-    const dayLegsMap={}, dayPaxMap={}, dayMinsMap={};
-    pComp.forEach(f=>{ if(!f.date) return;
-      dayLegsMap[f.date]=(dayLegsMap[f.date]||0)+1;
-      dayPaxMap[f.date]=(dayPaxMap[f.date]||0)+(parseInt(f.pax)||0);
-      dayMinsMap[f.date]=(dayMinsMap[f.date]||0)+(f.totalMinutes||0);
-    });
-    const busiestDayLegs = Object.entries(dayLegsMap).sort((a,b)=>b[1]-a[1])[0];
-    const busiestDayPax  = Object.entries(dayPaxMap).sort((a,b)=>b[1]-a[1])[0];
-    const avgPaxPerLeg   = pComp.length ? Math.round(pComp.reduce((s,f)=>s+(parseInt(f.pax)||0),0)/pComp.length*10)/10 : 0;
-    const daysWorked     = Object.keys(dayLegsMap).length;
-    const avgLegsPerDay  = daysWorked ? Math.round(pComp.length/daysWorked*10)/10 : 0;
-    const avgPaxPerDay   = daysWorked ? Math.round(Object.values(dayPaxMap).reduce((s,v)=>s+v,0)/daysWorked) : 0;
-    const avgBlockPerDay = daysWorked ? Math.round(Object.values(dayMinsMap).reduce((s,v)=>s+v,0)/daysWorked) : 0;
-    // All routes with frequency
-    const allRouteFreq={};
-    pComp.forEach(f=>{ if(!f.origin||!f.destination) return;
-      const r=`${f.origin}→${f.destination}`;
-      if(!allRouteFreq[r]) allRouteFreq[r]={route:r,legs:0,pax:0,mins:0};
-      allRouteFreq[r].legs++; allRouteFreq[r].pax+=parseInt(f.pax)||0; allRouteFreq[r].mins+=f.totalMinutes||0;
-    });
-    const allRoutes = Object.values(allRouteFreq).sort((a,b)=>b.legs-a.legs);
-    // Years of service
-    const yearsOfService = years.length>1 ? (parseInt(years[years.length-1])-parseInt(years[0])+1) : years.length;
-
     byPilot[pilot] = {
       username:pilot, fullName:PILOT_NAME_MAP[pilot]||pilot,
       totalLegs:pComp.length,
       totalMins:pComp.reduce((s,f)=>s+(f.totalMinutes||0),0),
       totalPax:pComp.reduce((s,f)=>s+(parseInt(f.pax)||0),0),
       cpMins:cpLegs.reduce((s,f)=>s+(f.totalMinutes||0),0),
-      byType, topDests, allRoutes, years, firstFlight:allDates[0]||null, lastFlight, daysSince,
+      byType, topDests, years, firstFlight:allDates[0]||null, lastFlight, daysSince,
       locationCount:uniqueDests.length, uniqueDests,
       ioeLegs:ioeLegs.length,
-      longestLeg, busiestDayLegs, busiestDayPax,
-      avgPaxPerLeg, avgLegsPerDay, avgPaxPerDay, avgBlockPerDay,
-      daysWorked, yearsOfService,
     };
   });
 
@@ -2912,7 +2882,7 @@ function computeFleetCompliance(flights, dutyAssignments={}, winterMode=false) {
   };
   const tailToIOEType = tail => {
     if(!tail) return null;
-    if(['N777DH','N4794C','N743KP','N748KP','N749KP'].includes(tail)) return 'SE';
+    if(['N777DH','N4794C','N743KP','N60TF','N748KP','N749KP'].includes(tail)) return 'SE';
     if(['N721KP','N722KP','N726KP','N754KP','N753KP','N755KP','N450KP','N438JP','N336JP','N264KP','N265KP'].includes(tail)) return 'MET';
     return null;
   };
@@ -7245,7 +7215,7 @@ function computeStats(fleetData, routeAvgs) {
     if(['N450KP','N438JP','N336JP'].includes(tail))             return 'EX Caravan';
     if(['N264KP','N265KP'].includes(tail))                      return 'Amphib Caravan';
     if(['N748KP','N749KP'].includes(tail))                      return 'C206 Amphib';
-    if(['N777DH','N4794C','N743KP'].includes(tail))     return 'Beaver';
+    if(['N777DH','N4794C','N743KP','N60TF'].includes(tail))     return 'Beaver';
     return null; // unknown/other tail - skip from type breakdown
   };
 
@@ -8183,7 +8153,7 @@ async function fetchQualsFromGSheet(csvUrl) {
         'N754KP':'N754KP','N753KP':'N753KP','N755KP':'N755KP',
         'N450KP':'N450KP','N438JP':'N438JP','N336JP':'N336JP',
         'N264KP':'N264KP','N265KP':'N265KP','N748KP':'N748KP','N749KP':'N749KP',
-        'N777DH':'N777DH','N4794C':'N4794C','N743KP':'N743KP',
+        'N777DH':'N777DH','N4794C':'N4794C','N743KP':'N743KP','N60TF DHC2':'N60TF',
         '754':'N754KP','753':'N753KP','755':'N755KP','36/38JP':'EX-Old'};
       const locCols=new Set(['SEAPILOTS (FLOATS)','PACK CREEK','ELFIN COVE','FOREST SERVICE','DRY BAY','NORRIS LAKE']);
       const acKey=acMap[hUp];
@@ -8220,7 +8190,7 @@ function parseQualsSheet(wb, utils) {
     'N264KP':'N264KP','N265KP':'N265KP',
     'N748KP':'N748KP','N749KP':'N749KP',
     'N777DH':'N777DH','N4794C':'N4794C','N743KP':'N743KP',
-    
+    'N60TF':'N60TF',
     // Grouped headers (new sheet format, normalized)
     '753/754/755':'Garret-TT',
     '438/336':'EX-Old','36/38JP':'EX-Old',
@@ -8231,8 +8201,8 @@ function parseQualsSheet(wb, utils) {
     // Also match without parens for older sheets
     'AMPHIB 206':'Amphib-206',
     'AMPHIB CARAVAN':'Amphib-C',
-    
-    
+    'N60TF DHC2':'N60TF',
+    'N60TF DHC2 ':'N60TF',
   };
   const locCols = new Set([
     'SEAPILOTS (FLOATS)','PACK CREEK','ELFIN COVE',
@@ -8456,7 +8426,7 @@ function QualsScreen({ qualsData, onUpload, fleetData }) {
   const filtered = search ? pilots.filter(p=>p.fullName.toLowerCase().includes(search.toLowerCase())) : pilots;
   const sortedKeys = Object.keys(activeData).sort((a,b)=>activeData[a].fullName.localeCompare(activeData[b].fullName));
 
-  const ALL_TAILS = ['N721KP','N722KP','N726KP','N754KP','N753KP','N755KP','N450KP','N438JP','N336JP','N264KP','N265KP','N748KP','N749KP','N777DH','N4794C','N743KP'];
+  const ALL_TAILS = ['N721KP','N722KP','N726KP','N754KP','N753KP','N755KP','N450KP','N438JP','N336JP','N264KP','N265KP','N748KP','N749KP','N777DH','N4794C','N743KP','N60TF'];
   const ALL_LOCS  = ['Elfin Cove','Pack Creek','Dry Bay','Norris Lake','Forest Service','Seapilots (floats)'];
 
   // Aircraft shorthand for column headers
@@ -8466,7 +8436,7 @@ function QualsScreen({ qualsData, onUpload, fleetData }) {
     'N450KP':'450','N438JP':'438','N336JP':'336',
     'N264KP':'264','N265KP':'265',
     'N748KP':'748','N749KP':'749',
-    'N777DH':'DH','N4794C':'94C','N743KP':'743',
+    'N777DH':'DH','N4794C':'94C','N743KP':'743','N60TF':'TF',
   };
 
   // Group dividers for aircraft matrix
@@ -8476,7 +8446,7 @@ function QualsScreen({ qualsData, onUpload, fleetData }) {
     {label:'EX Caravan',     tails:['N450KP','N438JP','N336JP'],  color:'#5aaa8a'},
     {label:'Amphib 208',     tails:['N264KP','N265KP'],           color:'#aa7adf'},
     {label:'C206 Amphib',    tails:['N748KP','N749KP'],           color:'#8888ff'},
-    {label:'Beaver',         tails:['N777DH','N4794C','N743KP'], color:'#ff8844'},
+    {label:'Beaver',         tails:['N777DH','N4794C','N743KP','N60TF'], color:'#ff8844'},
   ];
 
   const QCell = ({p, tail}) => {
@@ -8596,7 +8566,7 @@ function QualsScreen({ qualsData, onUpload, fleetData }) {
 
       {/* ── EDIT VIEW ── */}
       {viewMode==="edit"&&(()=>{
-        const ALL_TAILS_EDIT = ['N721KP','N722KP','N726KP','N754KP','N753KP','N755KP','N450KP','N438JP','N336JP','N264KP','N265KP','N748KP','N749KP','N777DH','N4794C','N743KP'];
+        const ALL_TAILS_EDIT = ['N721KP','N722KP','N726KP','N754KP','N753KP','N755KP','N450KP','N438JP','N336JP','N264KP','N265KP','N748KP','N749KP','N777DH','N4794C','N743KP','N60TF'];
         const ALL_LOCS_EDIT  = ['Elfin Cove','Pack Creek','Dry Bay','Norris Lake','Forest Service','Seapilots (floats)'];
         const AC_COLS = [
           {label:'PC-12',       color:'#4a9eff', tails:['N721KP','N722KP','N726KP']},
@@ -8674,7 +8644,7 @@ function QualsScreen({ qualsData, onUpload, fleetData }) {
                       const isIFR=ac.ifr;
                       const isVFR=ac.vfr||(!ac.ifr&&ac.qualified);
                       // Float/amphib/beaver = VFR only, no IFR option
-                      const VFR_ONLY_TAILS = new Set(['N264KP','N265KP','N748KP','N749KP','N777DH','N4794C','N743KP']);
+                      const VFR_ONLY_TAILS = new Set(['N264KP','N265KP','N748KP','N749KP','N777DH','N4794C','N743KP','N60TF']);
                       const vfrOnly = VFR_ONLY_TAILS.has(t);
                       // Cycle: empty → VFR → (IFR if allowed) → empty
                       const handleClick=()=>{
@@ -9210,232 +9180,498 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
   };
 
   const PilotModal = ({p}) => {
-    const [activeTab, setActiveTab] = React.useState('overview');
-    const [expandedPilotYear, setExpandedPilotYear] = React.useState(null);
-    const fmtH  = m  => m  ? `${(m/60).toFixed(1)}h` : "—";
-    const fmtHi = m  => m  ? `${Math.round(m/60).toLocaleString()}h` : "—";
+    const [expandedPilotYear, setExpandedPilotYear] = useState(null);
     const maxYrLegs = Math.max(...Object.values(p.byYear||{}).map(d=>d.legs),1);
-    const TABS = [["overview","OVERVIEW"],["routes","ALL ROUTES"],["years","BY YEAR"],["aircraft","AIRCRAFT"],["locations","LOCATIONS"]];
-    const LABEL_TYPE = {SEP:"Single Engine Piston",SET:"Single Engine Turboprop",MEP:"Multi-Engine Piston",UNK:"Unknown"};
-
-    const StatBox = ({label, value, sub, color, tip}) => (
-      <div title={tip||""} style={{background:"#060a0f",borderRadius:6,padding:"10px 12px",border:"1px solid #1a2530",cursor:tip?"help":"default"}}>
-        <div style={{fontSize:10,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:4,fontWeight:700}}>{label}</div>
-        <div style={{fontSize:21,fontWeight:700,color:color||"#e0e8f0",lineHeight:1}}>{value||"—"}</div>
-        {sub&&<div style={{fontSize:11,color:"#5a7a8a",marginTop:3}}>{sub}</div>}
-      </div>
-    );
-
-    return <div onClick={()=>setSelectedPilot(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:200,display:"flex",alignItems:"stretch",justifyContent:"flex-end"}}>
-      <div onClick={e=>e.stopPropagation()} style={{background:"#080c12",borderLeft:"1px solid #2a3a4a",width:"min(680px,100vw)",height:"100vh",display:"flex",flexDirection:"column",overflowY:"hidden"}}>
-
-        {/* Header */}
-        <div style={{background:"#0a0e16",borderBottom:"1px solid #1e2a38",padding:"16px 20px",flexShrink:0}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-            <div>
-              <div style={{fontSize:22,fontWeight:700,color:"#e0e8f0",marginBottom:4}}>{p.fullName}</div>
-              <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:12}}>
-                <span style={{color:"#4a9eff"}}>{p.username}</span>
-                {p.yearsOfService>0&&<span style={{color:"#7a9ab8"}}>{p.yearsOfService} yr{p.yearsOfService!==1?"s":""} of service</span>}
-                {p.years?.length>0&&<span style={{color:"#5a7a8a"}}>{p.years[0]}–{p.years[p.years.length-1]}</span>}
-                <span style={{color:"#5a7a8a"}}>{p.daysWorked?.toLocaleString()} days flown</span>
-              </div>
-            </div>
-            <button onClick={()=>setSelectedPilot(null)} style={{background:"none",border:"1px solid #2a3a4a",color:"#7a9ab8",fontSize:18,cursor:"pointer",padding:"4px 10px",borderRadius:5,lineHeight:1}}>✕</button>
+    return <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.85)",
+      zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onClick={()=>setSelectedPilot(null)}>
+      <div style={{background:"#0a0e14",border:"1px solid #2a3a4a",borderRadius:10,padding:20,
+        maxWidth:520,width:"100%",maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+          <div>
+            <div style={{fontSize:20,fontWeight:700,color:"#e0e8f0"}}>{p.fullName}</div>
+            <div style={{fontSize:12,color:"#4a9eff"}}>{p.username} · {p.years?.[0]}–{p.years?.[p.years.length-1]} · {p.years?.length||0} years</div>
           </div>
+          <button onClick={()=>setSelectedPilot(null)} style={{background:"none",border:"none",color:"#5a7a8a",fontSize:22,cursor:"pointer",lineHeight:1}}>×</button>
         </div>
-
-        {/* Tabs */}
-        <div style={{display:"flex",borderBottom:"1px solid #1e2a38",flexShrink:0,overflowX:"auto"}}>
-          {TABS.map(([id,label])=>(
-            <div key={id} onClick={()=>setActiveTab(id)} style={{padding:"10px 16px",fontSize:12,fontWeight:700,letterSpacing:"0.1em",cursor:"pointer",flexShrink:0,whiteSpace:"nowrap",
-              borderBottom:activeTab===id?"2px solid #4a9eff":"2px solid transparent",
-              color:activeTab===id?"#4a9eff":"#5a7a8a"}}>
-              {label}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+          {[{l:"LEGS",v:p.totalLegs?.toLocaleString(),c:"#4a9eff"},{l:"HOURS",v:fmtHi(p.totalMins),c:"#00b894"},{l:"PAX",v:p.totalPax?.toLocaleString(),c:"#ffd740"}].map(s=>(
+            <div key={s.l} style={{background:"#060a0f",borderRadius:6,padding:"8px 10px",textAlign:"center"}}>
+              <div style={{fontSize:10,color:"#4a5a6a",marginBottom:2}}>{s.l}</div>
+              <div style={{fontSize:20,fontWeight:700,color:s.c}}>{s.v}</div>
             </div>
           ))}
         </div>
-
-        {/* Scrollable content */}
-        <div style={{flex:1,overflowY:"auto",padding:"16px 20px 40px"}}>
-
-          {activeTab==="overview"&&<div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
-              <StatBox label="TOTAL LEGS" value={p.totalLegs?.toLocaleString()} color="#4a9eff" tip="Completed flight legs in Takeflite records"/>
-              <StatBox label="BLOCK HOURS" value={fmtHi(p.totalMins)} color="#00b894" tip="Block time (wheels rolling to wheels stopped)"/>
-              <StatBox label="PAX CARRIED" value={p.totalPax?.toLocaleString()} color="#ffd740" tip="Total passengers across all flights"/>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
-              <StatBox label="AVG PAX / LEG" value={p.avgPaxPerLeg?.toFixed(1)} tip="Average passengers per flight leg"/>
-              <StatBox label="AVG LEGS / DAY" value={p.avgLegsPerDay?.toFixed(1)} tip="Average legs on active flying days"/>
-              <StatBox label="AVG PAX / DAY" value={p.avgPaxPerDay} tip="Average passengers on active flying days"/>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
-              <StatBox label="AVG BLOCK / DAY" value={fmtH(p.avgBlockPerDay)} tip="Average block hours on active flying days"/>
-              <StatBox label="FIRST FLIGHT" value={p.firstFlight} color="#9abacb" tip="Earliest flight in Takeflite records"/>
-              <StatBox label="LAST FLIGHT" value={p.lastFlight} color="#9abacb" tip="Most recent completed flight"/>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
-              <StatBox label="CP / RIGHT SEAT HRS" value={fmtH(p.cpMins)} color="#a29bfe" tip="Block time logged as check airman in right seat"/>
-              <StatBox label="IOE LEGS SUPERVISED" value={p.ioeLegs} color="#a29bfe" tip="Legs as check airman during IOE training"/>
-            </div>
-
-            {p.longestLeg&&<div style={{background:"#060a0f",borderRadius:6,padding:"12px 14px",marginBottom:8,border:"1px solid #1a2530"}}>
-              <div style={{fontSize:10,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:8}}>LONGEST SINGLE LEG</div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div>
-                  <div style={{fontSize:20,fontWeight:700,color:"#00b894",fontFamily:"monospace"}}>{p.longestLeg.origin}→{p.longestLeg.destination}</div>
-                  <div style={{fontSize:12,color:"#5a7a8a",marginTop:2}}>{p.longestLeg.date} · {p.longestLeg.tailNumber} · {parseInt(p.longestLeg.pax)||0} pax</div>
-                </div>
-                <div style={{fontSize:32,fontWeight:700,color:"#00b894"}}>{fmtH(p.longestLeg.totalMinutes)}</div>
-              </div>
-            </div>}
-
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
-              {p.busiestDayLegs&&<div style={{background:"#060a0f",borderRadius:6,padding:"12px 14px",border:"1px solid #1a2530"}}>
-                <div style={{fontSize:10,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>BUSIEST DAY — LEGS</div>
-                <div style={{fontSize:14,color:"#b8c8d8"}}>{p.busiestDayLegs[0]}</div>
-                <div style={{fontSize:28,fontWeight:700,color:"#4a9eff"}}>{p.busiestDayLegs[1]} <span style={{fontSize:13,color:"#5a7a8a",fontWeight:400}}>legs</span></div>
-              </div>}
-              {p.busiestDayPax&&<div style={{background:"#060a0f",borderRadius:6,padding:"12px 14px",border:"1px solid #1a2530"}}>
-                <div style={{fontSize:10,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>BUSIEST DAY — PAX</div>
-                <div style={{fontSize:14,color:"#b8c8d8"}}>{p.busiestDayPax[0]}</div>
-                <div style={{fontSize:28,fontWeight:700,color:"#ffd740"}}>{p.busiestDayPax[1]} <span style={{fontSize:13,color:"#5a7a8a",fontWeight:400}}>pax</span></div>
-              </div>}
-            </div>
-
-            {p.byType&&Object.keys(p.byType||{}).filter(t=>t!=="UNK").length>0&&<div style={{background:"#060a0f",borderRadius:6,padding:"12px 14px",border:"1px solid #1a2530"}}>
-              <div style={{fontSize:10,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:10}}>HOURS BY AIRCRAFT CATEGORY</div>
-              {Object.entries(p.byType||{}).filter(([t])=>t!=="UNK").sort((a,b)=>b[1]-a[1]).map(([t,m])=>{
-                const maxM=Math.max(...Object.values(p.byType||{}).map(v=>v),1);
-                return <div key={t} style={{marginBottom:8}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:3,fontSize:13}}>
-                    <span style={{color:"#9abacb"}}>{LABEL_TYPE[t]||t}</span>
-                    <span style={{color:"#00b894",fontWeight:700}}>{fmtHi(m)}</span>
+        {p.byYear&&Object.keys(p.byYear).length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>YEAR BY YEAR</div>
+          <div style={{background:"#060a0f",borderRadius:6,padding:"8px 10px",marginBottom:12}}>
+            {Object.entries(p.byYear).sort((a,b)=>a[0].localeCompare(b[0])).map(([y,d])=>{
+              const isExp = expandedPilotYear===y;
+              const det = p.byYearDetail?.[y];
+              return <div key={y}>
+                <div onClick={()=>setExpandedPilotYear(isExp?null:y)}
+                  style={{display:"flex",alignItems:"center",gap:6,marginBottom:isExp?4:3,cursor:"pointer",
+                  background:isExp?"rgba(74,158,255,0.06)":"transparent",borderRadius:3,padding:"2px 4px",margin:"0 -4px"}}>
+                  <span style={{width:32,fontSize:11,color:isExp?"#4a9eff":"#5a7a8a",fontWeight:isExp?700:400}}>{y}</span>
+                  <div style={{flex:1,height:10,background:"#1e2730",borderRadius:2,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${d.legs/maxYrLegs*100}%`,background:isExp?"#4a9eff":"#4a9eff44",borderRadius:2}}/>
                   </div>
-                  <div style={{height:6,background:"#1a2530",borderRadius:3,overflow:"hidden"}}>
-                    <div style={{height:"100%",width:`${m/maxM*100}%`,background:"#00b894",borderRadius:3}}/>
-                  </div>
-                </div>;
-              })}
-            </div>}
-          </div>}
-
-          {activeTab==="routes"&&<div>
-            <div style={{fontSize:12,color:"#5a7a8a",marginBottom:10}}>{(p.allRoutes||[]).length} unique routes · sorted by frequency</div>
-            <div style={{background:"#060a0f",borderRadius:6,border:"1px solid #1a2530",overflow:"hidden"}}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 50px 60px 50px",gap:4,padding:"7px 12px",
-                borderBottom:"1px solid #1a2530",fontSize:10,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.08em"}}>
-                <span>ROUTE</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>BLOCK HRS</span><span style={{textAlign:"right"}}>PAX</span>
-              </div>
-              {(p.allRoutes||[]).map((r,i)=>(
-                <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 50px 60px 50px",gap:4,
-                  padding:"5px 12px",fontSize:14,
-                  borderBottom:i<(p.allRoutes||[]).length-1?"1px solid #0d1117":"none",
-                  background:i%2===0?"#08101e":"#0a1220"}}>
-                  <span style={{color:"#4a9eff",fontFamily:"monospace",fontWeight:700}}>{r.route}</span>
-                  <span style={{color:"#e0e8f0",textAlign:"right",fontWeight:700}}>{r.legs}</span>
-                  <span style={{color:"#00b894",textAlign:"right"}}>{fmtH(r.mins)}</span>
-                  <span style={{color:"#ffd740",textAlign:"right"}}>{r.pax}</span>
+                  <span style={{width:40,fontSize:11,color:"#9abacb",textAlign:"right"}}>{d.legs}</span>
+                  <span style={{width:44,fontSize:11,color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
+                  <span style={{width:38,fontSize:11,color:"#5a7a8a",textAlign:"right"}}>{fmtK(d.pax)}p</span>
+                  <span style={{fontSize:10,color:"#3a5060",width:10}}>{isExp?"▾":"▸"}</span>
                 </div>
-              ))}
-            </div>
-          </div>}
-
-          {activeTab==="years"&&<div>
-            <div style={{fontSize:12,color:"#5a7a8a",marginBottom:10}}>Year by year · tap a row for tail and route breakdown</div>
-            <div style={{background:"#060a0f",borderRadius:6,border:"1px solid #1a2530",overflow:"hidden"}}>
-              <div style={{display:"grid",gridTemplateColumns:"50px 1fr 50px 55px 50px",gap:4,padding:"7px 12px",
-                borderBottom:"1px solid #1a2530",fontSize:10,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.08em"}}>
-                <span>YEAR</span><span>ACTIVITY</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>BLOCK HRS</span><span style={{textAlign:"right"}}>PAX</span>
-              </div>
-              {Object.entries(p.byYear||{}).sort((a,b)=>b[0].localeCompare(a[0])).map(([yr,d])=>{
-                const isExp=expandedPilotYear===yr;
-                const det=p.byYearDetail?.[yr];
-                return <div key={yr}>
-                  <div onClick={()=>setExpandedPilotYear(isExp?null:yr)}
-                    style={{display:"grid",gridTemplateColumns:"50px 1fr 50px 55px 50px",gap:4,
-                      padding:"7px 12px",cursor:"pointer",
-                      background:isExp?"#0a1a2a":"#08101e",
-                      borderBottom:"1px solid #0d1117"}}>
-                    <span style={{fontSize:13,color:isExp?"#4a9eff":"#7a9ab8",fontWeight:isExp?700:400}}>{yr}</span>
-                    <div style={{display:"flex",alignItems:"center"}}>
-                      <div style={{flex:1,height:8,background:"#1a2530",borderRadius:2,overflow:"hidden"}}>
-                        <div style={{height:"100%",width:`${d.legs/maxYrLegs*100}%`,background:isExp?"#4a9eff":"#4a9eff55",borderRadius:2}}/>
+                {isExp&&det&&<div style={{background:"#0a1018",borderRadius:4,padding:"6px 8px",marginBottom:4,marginLeft:36}}>
+                  {det.topTails?.length>0&&<div style={{marginBottom:6}}>
+                    <div style={{fontSize:10,color:"#3a5060",marginBottom:3}}>TOP TAILS</div>
+                    {det.topTails.map((t,i)=>(
+                      <div key={t.tail} style={{display:"flex",gap:8,fontSize:11,alignItems:"center",padding:"1px 0"}}>
+                        <span style={{color:"#4a9eff",fontFamily:"monospace",width:64,flexShrink:0}}>{t.tail}</span>
+                        <span style={{color:"#4a5a6a",flex:1,fontSize:10}}>{t.desc}</span>
+                        <span style={{color:"#00b894",width:36,textAlign:"right"}}>{fmtH(t.mins)}</span>
+                        <span style={{color:"#5a7a8a",width:28,textAlign:"right"}}>{t.legs}L</span>
                       </div>
-                    </div>
-                    <span style={{fontSize:13,color:"#9abacb",textAlign:"right",fontWeight:700}}>{d.legs}</span>
-                    <span style={{fontSize:13,color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
-                    <span style={{fontSize:13,color:"#5a7a8a",textAlign:"right"}}>{d.pax}</span>
-                  </div>
-                  {isExp&&det&&<div style={{background:"#060d14",padding:"10px 14px",borderBottom:"1px solid #1e2730"}}>
-                    {det.topTails?.length>0&&<>
-                      <div style={{fontSize:10,color:"#3a5060",fontWeight:700,letterSpacing:"0.08em",marginBottom:5}}>TAILS FLOWN</div>
-                      {det.topTails.map(t=>(
-                        <div key={t.tail} style={{display:"flex",gap:8,fontSize:13,padding:"3px 0",borderBottom:"1px solid #0a1018",alignItems:"center"}}>
-                          <span style={{color:"#4a9eff",fontFamily:"monospace",width:70,flexShrink:0}}>{t.tail}</span>
-                          <span style={{color:"#4a5a6a",flex:1,fontSize:11}}>{t.desc}</span>
-                          <span style={{color:"#00b894",width:44,textAlign:"right",fontWeight:700}}>{fmtH(t.mins)}</span>
-                          <span style={{color:"#5a7a8a",width:30,textAlign:"right"}}>{t.legs}L</span>
-                        </div>
-                      ))}
-                    </>}
-                    {det.topRoutes?.length>0&&<>
-                      <div style={{fontSize:10,color:"#3a5060",fontWeight:700,letterSpacing:"0.08em",marginTop:10,marginBottom:5}}>TOP ROUTES</div>
-                      {det.topRoutes.map(r=>(
-                        <div key={r.route} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"3px 0",borderBottom:"1px solid #0a1018"}}>
-                          <span style={{color:"#9abacb",fontFamily:"monospace"}}>{r.route}</span>
-                          <span style={{color:"#5a7a8a"}}>{r.n} legs</span>
-                        </div>
-                      ))}
-                    </>}
+                    ))}
                   </div>}
-                </div>;
-              })}
-            </div>
-          </div>}
-
-          {activeTab==="aircraft"&&<div>
-            <div style={{fontSize:12,color:"#5a7a8a",marginBottom:10}}>Every aircraft flown · sorted by block hours · all block times from Takeflite</div>
-            <div style={{background:"#060a0f",borderRadius:6,border:"1px solid #1a2530",overflow:"hidden"}}>
-              <div style={{display:"grid",gridTemplateColumns:"76px 1fr 60px 50px",gap:4,padding:"7px 12px",
-                borderBottom:"1px solid #1a2530",fontSize:10,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.08em"}}>
-                <span>TAIL #</span><span>AIRCRAFT TYPE</span><span style={{textAlign:"right"}}>BLOCK HRS</span><span style={{textAlign:"right"}}>LEGS</span>
+                  {det.topRoutes?.length>0&&<div>
+                    <div style={{fontSize:10,color:"#3a5060",marginBottom:3}}>TOP ROUTES</div>
+                    {det.topRoutes.map((r,i)=>(
+                      <div key={r.route} style={{display:"flex",gap:8,fontSize:11,padding:"1px 0"}}>
+                        <span style={{color:"#9abacb",fontFamily:"monospace",flex:1}}>{r.route}</span>
+                        <span style={{color:"#5a7a8a"}}>{r.n} legs</span>
+                      </div>
+                    ))}
+                  </div>}
+                </div>}
+              </div>;
+            })}
+          </div>
+        </>}
+        {p.topRoutes?.length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>TOP ROUTES</div>
+          <div style={{background:"#060a0f",borderRadius:6,padding:"8px 10px",marginBottom:12}}>
+            {p.topRoutes.slice(0,8).map((r,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",
+                borderBottom:i<7?"1px solid #0d1520":"none",fontSize:13}}>
+                <span style={{color:"#9abacb",fontFamily:"monospace"}}>{r.route}</span>
+                <span style={{color:"#4a9eff"}}>{r.legs} legs</span>
+                <span style={{color:"#ffd740"}}>{r.pax} pax</span>
               </div>
-              {(p.byTailArr||[]).map((t,i)=>(
-                <div key={t.tail} style={{display:"grid",gridTemplateColumns:"76px 1fr 60px 50px",gap:4,
-                  padding:"6px 12px",fontSize:14,
-                  borderBottom:i<(p.byTailArr||[]).length-1?"1px solid #0d1117":"none",
-                  background:i%2===0?"#08101e":"#0a1220"}}>
-                  <span style={{color:"#4a9eff",fontFamily:"monospace",fontWeight:700}}>{t.tail}</span>
-                  <span style={{color:"#5a7a8a",fontSize:12}}>{t.desc}</span>
-                  <span style={{color:"#00b894",textAlign:"right",fontWeight:700}}>{fmtH(t.mins)}</span>
-                  <span style={{color:"#9abacb",textAlign:"right"}}>{t.legs}</span>
-                </div>
-              ))}
-            </div>
-          </div>}
-
-          {activeTab==="locations"&&<div>
-            <div style={{fontSize:12,color:"#5a7a8a",marginBottom:10}}>{p.locationCount} unique destinations flown to · sorted alphabetically</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-              {(p.uniqueDests||[]).sort((a,b)=>(LOCATION_NAMES[a]||a).localeCompare(LOCATION_NAMES[b]||b)).map(d=>{
-                const full=LOCATION_NAMES[d];
-                return <div key={d} style={{background:"#060a0f",borderRadius:5,padding:"5px 10px",
-                  border:"1px solid #1a2530",display:"flex",flexDirection:"column",alignItems:"center",minWidth:70}}>
-                  <span style={{fontSize:13,color:"#e0e8f0",fontWeight:700}}>{full||d}</span>
-                  {full&&<span style={{fontSize:10,color:"#3a5a7a",fontFamily:"monospace"}}>{d}</span>}
-                </div>;
-              })}
-            </div>
-          </div>}
-
-        </div>
+            ))}
+          </div>
+        </>}
+        {p.byTailArr?.length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>HOURS BY AIRCRAFT</div>
+          <div style={{background:"#060a0f",borderRadius:6,padding:"8px 10px",marginBottom:12,maxHeight:220,overflowY:"auto"}}>
+            {p.byTailArr.map((t,i)=>(
+              <div key={t.tail} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",
+                borderBottom:i<p.byTailArr.length-1?"1px solid #0d1520":"none",fontSize:12}}>
+                <span style={{width:70,color:"#4a9eff",fontFamily:"monospace",fontWeight:700,flexShrink:0}}>{t.tail}</span>
+                <span style={{flex:1,color:"#6a8a9a",fontSize:11}}>{t.desc}</span>
+                <span style={{color:"#00b894",fontWeight:700,width:44,textAlign:"right"}}>{fmtH(t.mins)}</span>
+                <span style={{color:"#5a7a8a",width:40,textAlign:"right"}}>{t.legs}L</span>
+              </div>
+            ))}
+          </div>
+        </>}
+        {p.byType&&Object.keys(p.byType||{}).filter(t=>t!=='UNK').length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>BY TYPE</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+            {Object.entries(p.byType||{}).filter(([t])=>t!=='UNK').sort((a,b)=>b[1]-a[1]).map(([t,m])=>(
+              <div key={t} style={{background:"#060a0f",borderRadius:5,padding:"6px 10px",textAlign:"center"}}>
+                <div style={{fontSize:10,color:"#4a5a6a"}}>{TAIL_LABEL[t]||t}</div>
+                <div style={{fontSize:15,fontWeight:700,color:"#00b894"}}>{fmtH(m)}</div>
+              </div>
+            ))}
+          </div>
+        </>}
+        {p.uniqueDests?.length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:"#5a7a8a",letterSpacing:"0.1em",marginBottom:6}}>
+            ALL LOCATIONS ({p.locationCount})
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+            {p.uniqueDests.sort((a,b)=>locName(a).localeCompare(locName(b))).map(d=>{
+              const full=LOCATION_NAMES[d];
+              return <span key={d} style={{background:"#0a1520",borderRadius:4,padding:"3px 8px",
+                border:"1px solid #1a2a3a",display:"flex",flexDirection:"column",alignItems:"center",minWidth:60}}>
+                <span style={{fontSize:12,color:"#e0e8f0",fontWeight:600}}>{full||d}</span>
+                {full&&<span style={{fontSize:9,color:"#3a5a7a",fontFamily:"monospace"}}>{d}</span>}
+              </span>;
+            })}
+          </div>
+        </>}
       </div>
     </div>;
   };
 
-  function App() {
+  return <div style={{padding:"12px 14px 100px"}}>
+    {selectedPilot&&<PilotModal p={selectedPilot}/>}
+
+    {/* Rebuild button */}
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+      <button onClick={rebuildFromSupabase} disabled={rebuilding}
+        style={{padding:"5px 12px",background:rebuilding?"#0a1018":"rgba(74,158,255,0.1)",border:"1px solid rgba(74,158,255,0.3)",
+        borderRadius:5,color:rebuilding?"#4a6070":"#4a9eff",fontSize:11,fontWeight:700,cursor:rebuilding?"default":"pointer",fontFamily:"'JetBrains Mono',monospace"}}>
+        {rebuilding?"⏳ "+rebuildStatus:"📡 REBUILD FROM SUPABASE"}
+      </button>
+      {rebuildStatus&&!rebuilding&&<span style={{fontSize:11,color:rebuildStatus.startsWith("✓")?"#00b894":"#ff4757"}}>{rebuildStatus}</span>}
+    </div>
+
+    {/* Tab bar */}
+    <div style={{display:"flex",gap:2,marginBottom:16,background:"#0a0e14",borderRadius:6,padding:3}}>
+      {TABS.map(([id,label])=>(
+        <div key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"6px 0",textAlign:"center",fontSize:11,fontWeight:700,
+          letterSpacing:"0.07em",cursor:"pointer",borderRadius:4,
+          background:tab===id?"#1a2a3a":"transparent",color:tab===id?"#e0e8f0":"#5a7a8a"}}>
+          {label}
+        </div>
+      ))}
+    </div>
+
+    {/* ── OVERVIEW ── */}
+    {tab==="overview"&&<div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:14}}>
+        {[{l:"TOTAL LEGS",v:historyStats.totalLegs?.toLocaleString(),c:"#4a9eff"},
+          {l:"BLOCK HOURS",v:fmtHi(historyStats.totalMins),c:"#00b894"},
+          {l:"PAX CARRIED",v:historyStats.totalPax?.toLocaleString(),c:"#ffd740"},
+          {l:"PILOTS EVER",v:historyStats.uniquePilots?.toString(),c:"#a29bfe"}].map(s=>(
+          <div key={s.l} style={{background:"#0a0e14",borderRadius:6,padding:"10px 8px",border:"1px solid #1e2730",textAlign:"center"}}>
+            <div style={{fontSize:10,color:"#5a7a8a",letterSpacing:"0.08em",marginBottom:4}}>{s.l}</div>
+            <div style={{fontSize:20,fontWeight:700,color:s.c}}>{s.v||"—"}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{fontSize:11,color:"#7a8a9a",marginBottom:14,textAlign:"center"}}>
+        {historyStats.dateRange?.start} → {historyStats.dateRange?.end}
+      </div>
+
+      <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>YEAR BY YEAR</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",padding:"10px 12px",marginBottom:14}}>
+        {Object.entries(historyStats.byYear||{}).sort((a,b)=>a[0].localeCompare(b[0])).map(([y,d])=>{
+          const pct=d.legs/maxYearLegs; const covid=y==="2020"; const hov=hoveredYear===y;
+          return <div key={y} style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,cursor:"pointer"}}
+            onMouseEnter={()=>setHoveredYear(y)} onMouseLeave={()=>setHoveredYear(null)}>
+            <span style={{width:36,fontSize:12,color:covid?"#ff6d00":hov?"#e0e8f0":"#7a9ab8",flexShrink:0,fontWeight:hov?700:400}}>{y}</span>
+            <div style={{flex:1,height:hov?18:14,background:"#1e2730",borderRadius:2,overflow:"hidden",transition:"height 0.1s"}}>
+              <div style={{height:"100%",width:`${pct*100}%`,background:covid?"#ff6d0055":hov?"#4a9eff":"#4a9eff55",borderRadius:2,transition:"background 0.15s"}}/>
+            </div>
+            {hov?<>
+              <span style={{width:60,fontSize:12,color:"#4a9eff",textAlign:"right",fontWeight:700}}>{d.legs.toLocaleString()}</span>
+              <span style={{width:55,fontSize:12,color:"#00b894",textAlign:"right"}}>{fmtH(d.mins)}</span>
+              <span style={{width:50,fontSize:12,color:"#ffd740",textAlign:"right"}}>{fmtK(d.pax)}p</span>
+            </>:<>
+              <span style={{width:60,fontSize:12,color:"#9abacb",textAlign:"right"}}>{d.legs.toLocaleString()}</span>
+              <span style={{width:55,fontSize:12,color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
+              <span style={{width:50,fontSize:12,color:"#5a7a8a",textAlign:"right"}}>{fmtK(d.pax)}p</span>
+            </>}
+          </div>;
+        })}
+      </div>
+
+      <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>SEASONAL PATTERN</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",padding:"10px 12px",marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"flex-end",gap:4,height:64}}>
+          {(historyStats.byMonth||[]).map((d,i)=>{
+            const pct=d.legs/maxMonthLegs; const summer=i>=4&&i<=8;
+            return <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+              <div style={{width:"100%",background:summer?"#4a9eff":"#2a4a6a",borderRadius:"2px 2px 0 0",height:`${Math.max(4,pct*56)}px`}}/>
+              <span style={{fontSize:9,color:summer?"#4a9eff":"#3a5a6a"}}>{MONTHS[i].slice(0,1)}</span>
+            </div>;
+          })}
+        </div>
+      </div>
+
+      <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>TOP 20 DAYS — MOST LEGS</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"100px 55px 60px 55px 55px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+          <span>DATE</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>BLOCK</span><span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>PILOTS</span>
+        </div>
+        {(historyStats.topDaysByLegs||[]).map((d,i)=>(
+          <div key={i} onClick={()=>setSelectedDay(d.date)}
+            style={{display:"grid",gridTemplateColumns:"100px 55px 60px 55px 45px",gap:4,padding:"5px 10px",fontSize:13,
+            borderBottom:i<19?"1px solid #0d1117":"none",background:i%2===0?"#08101e":"#0a1220",
+            cursor:"pointer"}}
+            onMouseEnter={e=>e.currentTarget.style.background="#0a1a2a"}
+            onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#08101e":"#0a1220"}>
+            <span style={{color:"#b8c8d8"}}>{d.date}</span>
+            <span style={{color:"#4a9eff",fontWeight:700,textAlign:"right"}}>{d.legs}</span>
+            <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
+            <span style={{color:"#ffd740",textAlign:"right"}}>{d.pax}</span>
+            <span style={{color:"#5a7a8a",textAlign:"right",fontSize:11}}>›</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>TOP 20 DAYS — MOST PAX</div>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
+        <div style={{display:"grid",gridTemplateColumns:"100px 55px 60px 55px 55px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+          <span>DATE</span><span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>BLOCK</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>PILOTS</span>
+        </div>
+        {(historyStats.topDaysByPax||[]).map((d,i)=>(
+          <div key={i} onClick={()=>setSelectedDay(d.date)}
+            style={{display:"grid",gridTemplateColumns:"100px 55px 60px 55px 45px",gap:4,padding:"5px 10px",fontSize:13,
+            borderBottom:i<19?"1px solid #0d1117":"none",background:i%2===0?"#08101e":"#0a1220",cursor:"pointer"}}
+            onMouseEnter={e=>e.currentTarget.style.background="#0a1a2a"}
+            onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#08101e":"#0a1220"}>
+            <span style={{color:"#b8c8d8"}}>{d.date}</span>
+            <span style={{color:"#ffd740",fontWeight:700,textAlign:"right"}}>{d.pax}</span>
+            <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(d.mins)}</span>
+            <span style={{color:"#4a9eff",textAlign:"right"}}>{d.legs}</span>
+            <span style={{color:"#5a7a8a",textAlign:"right",fontSize:11}}>›</span>
+          </div>
+        ))}
+      </div>
+    </div>}
+
+    {/* ── RECORDS ── */}
+    {tab==="records"&&(()=>{
+      const rec = historyStats.records||{};
+      const RTABS=[["pilots","PILOTS"],["routes","ROUTES"],["days","DAYS"],["fleet","FLEET"]];
+      const boards = {
+        pilots:[
+          {title:"MOST LEGS FLOWN",icon:"✈",items:rec.mostLegs||[],valColor:"#4a9eff"},
+          {title:"MOST BLOCK HOURS",icon:"⏱",items:rec.mostHours||[],valColor:"#00b894",unit:"h"},
+          {title:"MOST PAX CARRIED",icon:"👥",items:rec.mostPax||[],valColor:"#ffd740"},
+        ],
+        routes:[
+          {title:"TOP ROUTES — LEGS",icon:"🗺",items:rec.topRouteLegs||[],valColor:"#4a9eff"},
+          {title:"TOP ROUTES — PAX",icon:"👥",items:rec.topRoutePax||[],valColor:"#ffd740"},
+        ],
+        days:[
+          {title:"BUSIEST DAYS — LEGS",icon:"📅",items:rec.busyDays||[],valColor:"#4a9eff"},
+          {title:"BUSIEST DAYS — PAX",icon:"🧳",items:rec.paxDays||[],valColor:"#ffd740"},
+        ],
+        fleet:[
+          {title:"TOP TAILS — LIFETIME LEGS",icon:"✈",items:rec.topTails||[],valColor:"#00b894"},
+        ],
+      };
+      return <div>
+        <div style={{display:"flex",gap:2,marginBottom:14,background:"#0a0e14",borderRadius:6,padding:3}}>
+          {RTABS.map(([id,l])=>(
+            <div key={id} onClick={()=>setRecordsTab(id)} style={{flex:1,padding:"5px 0",textAlign:"center",fontSize:11,fontWeight:700,
+              letterSpacing:"0.07em",cursor:"pointer",borderRadius:4,
+              background:recordsTab===id?"#1a2a3a":"transparent",color:recordsTab===id?"#e0e8f0":"#5a7a8a"}}>{l}</div>
+          ))}
+        </div>
+        {(boards[recordsTab]||[]).map((board,bi)=>(
+          <div key={bi} style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>
+              {board.icon} {board.title}
+            </div>
+            <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
+              {(board.items||[]).map((item,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",
+                  borderBottom:i<board.items.length-1?"1px solid #0d1117":"none",
+                  background:i===0?"#0a1a0a":i%2===0?"#08101e":"#0a1220",cursor:"pointer"}}
+                  onClick={()=>{ const p=historyStats.byPilot?.[item.username]; if(p) setSelectedPilot(p); }}>
+                  <span style={{width:20,fontSize:12,color:i===0?"#ffd740":i===1?"#9abacb":i===2?"#a0734a":"#3a5060",fontWeight:700}}>
+                    {i===0?"🥇":i===1?"🥈":i===2?"🥉":`${i+1}.`}
+                  </span>
+                  <span style={{flex:1,fontSize:14,color:i===0?"#e0e8f0":"#b0c0d0",fontWeight:i===0?700:400}}>{item.name}</span>
+                  <span style={{fontSize:16,fontWeight:700,color:board.valColor}}>{typeof item.value==='number'?item.value.toLocaleString():item.value}</span>
+                  <span style={{fontSize:11,color:"#5a7a8a",minWidth:60,textAlign:"right"}}>{item.sub}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>;
+    })()}
+
+    {/* ── PILOTS ── */}
+    {tab==="pilots"&&<div>
+      <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
+        <input value={pilotSearch} onChange={e=>setPilotSearch(e.target.value)} placeholder="Search pilot..."
+          style={{flex:1,background:"#0a1018",border:"1px solid #1e2730",borderRadius:5,padding:"6px 10px",
+          color:"#e0e8f0",fontSize:13,fontFamily:"'JetBrains Mono',monospace"}}/>
+        {[["hours","HRS"],["totalLegs","LEGS"],["totalPax","PAX"]].map(([k,l])=>(
+          <div key={k} onClick={()=>setPilotSort(k)} style={{padding:"4px 8px",borderRadius:4,fontSize:11,fontWeight:700,cursor:"pointer",
+            background:pilotSort===k?"#1a2a3a":"transparent",color:pilotSort===k?"#4a9eff":"#5a7a8a",
+            border:"1px solid",borderColor:pilotSort===k?"#4a9eff44":"transparent"}}>{l}</div>
+        ))}
+      </div>
+      <div style={{fontSize:11,color:"#4a6070",marginBottom:8}}>
+        {filtActive.length} active pilots · tap a card for full career detail
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
+        {filtActive.map(p=>(
+          <div key={p.username} onClick={()=>setSelectedPilot(p)}
+            style={{background:"#0a0e14",borderRadius:6,padding:"10px 12px",border:"1px solid #1e2730",cursor:"pointer",transition:"border-color 0.15s"}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor="#4a9eff44"}
+            onMouseLeave={e=>e.currentTarget.style.borderColor="#1e2730"}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+              <div>
+                <span style={{fontSize:15,fontWeight:700,color:"#e0e8f0"}}>{p.fullName}</span>
+                <span style={{fontSize:11,color:"#3a5060",marginLeft:6}}>{p.username}</span>
+                {p.years?.length>0&&<span style={{fontSize:11,color:"#4a9eff",marginLeft:6}}>{p.years[0]}–{p.years[p.years.length-1]}</span>}
+              </div>
+              <div style={{textAlign:"right",fontSize:11,color:"#5a7a8a"}}>
+                <div>{p.locationCount} locations</div>
+                <div style={{color:"#3a5060"}}>tap for detail ›</div>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6}}>
+              {[{l:"LEGS",v:p.totalLegs?.toLocaleString(),c:"#4a9eff"},{l:"HOURS",v:fmtH(p.totalMins),c:"#00b894"},
+                {l:"PAX",v:p.totalPax?.toLocaleString(),c:"#ffd740"},{l:"CP HRS",v:p.cpMins>0?fmtH(p.cpMins):"—",c:"#a29bfe"}].map(s=>(
+                <div key={s.l} style={{background:"#060a0f",borderRadius:4,padding:"5px 8px"}}>
+                  <div style={{fontSize:10,color:"#4a5a6a"}}>{s.l}</div>
+                  <div style={{fontSize:15,fontWeight:700,color:s.c}}>{s.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div onClick={()=>setShowAlumni(!showAlumni)} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",
+        padding:"10px 14px",background:"linear-gradient(135deg,#1a0a1e,#0d1420)",borderRadius:6,
+        border:"1px solid #7c3aed44",marginBottom:showAlumni?8:0}}>
+        <span style={{fontSize:16,marginRight:2}}>🏅</span>
+        <span style={{fontSize:12,fontWeight:700,color:"#c084fc",letterSpacing:"0.08em"}}>
+          ALUMNI HALL OF FAME — {filtAlumni.length} legends
+        </span>
+        <span style={{fontSize:13,color:showAlumni?"#f472b6":"#c084fc",marginLeft:"auto"}}>{showAlumni?"▼":"▶"}</span>
+      </div>
+      {showAlumni&&<div style={{display:"flex",flexDirection:"column",gap:4}}>
+        {filtAlumni.map((p,ai)=>{
+          const aColors=["#ffd700","#f472b6","#34d399","#c084fc","#fb923c","#38bdf8","#a3e635","#e879f9"];
+          const ac=aColors[ai%aColors.length];
+          return <div key={p.username} onClick={()=>setSelectedPilot(p)}
+            style={{background:"#0a0d14",borderRadius:6,padding:"10px 14px",cursor:"pointer",
+            border:`1px solid ${ac}33`,marginBottom:2}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor=ac+"88"}
+            onMouseLeave={e=>e.currentTarget.style.borderColor=ac+"33"}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+              <div>
+                <span style={{fontSize:14,fontWeight:700,color:ac}}>{p.fullName}</span>
+                <span style={{fontSize:11,color:"#5a6a7a",marginLeft:6}}>{p.username}</span>
+                <span style={{fontSize:11,color:"#7a6a4a",marginLeft:6}}>{p.years?.[0]||"?"}–{p.years?.[p.years.length-1]||"?"}</span>
+              </div>
+              <span style={{fontSize:11,color:"#5a6a7a"}}>last {p.lastFlight||"—"}</span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6}}>
+              {[{l:"LEGS",v:p.totalLegs?.toLocaleString(),c:"#e2c97e"},
+                {l:"HOURS",v:fmtH(p.totalMins),c:"#34d399"},
+                {l:"PAX",v:p.totalPax?.toLocaleString(),c:"#fb923c"},
+                {l:"LOCATIONS",v:p.locationCount,c:"#c084fc"}].map(s=>(
+                <div key={s.l} style={{background:"#060810",borderRadius:4,padding:"4px 8px"}}>
+                  <div style={{fontSize:9,color:"#4a5a6a"}}>{s.l}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:s.c}}>{s.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>;
+        })}
+      </div>}
+    </div>}
+
+    {/* ── ROUTES ── */}
+    {tab==="routes"&&<div>
+      <input value={routeSearch} onChange={e=>setRouteSearch(e.target.value)} placeholder="Filter routes (e.g. HNH, JNU→GST)..."
+        style={{width:"100%",background:"#0a1018",border:"1px solid #1e2730",borderRadius:5,padding:"7px 10px",
+        color:"#e0e8f0",fontSize:13,fontFamily:"'JetBrains Mono',monospace",marginBottom:10,boxSizing:"border-box"}}/>
+      <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
+        <div style={{display:"grid",gridTemplateColumns:"120px 65px 60px 65px 65px",gap:4,padding:"6px 10px",
+          borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+          <span>ROUTE</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>HOURS</span>
+          <span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>PILOTS</span>
+        </div>
+        {filtRoutes.slice(0,60).map((r,i)=>(
+          <div key={i} style={{display:"grid",gridTemplateColumns:"120px 65px 60px 65px 65px",gap:4,padding:"5px 10px",fontSize:13,
+            borderBottom:i<filtRoutes.length-1?"1px solid #0d1117":"none",background:i%2===0?"#08101e":"#0a1220"}}>
+            <span style={{color:"#4a9eff",fontFamily:"monospace",fontWeight:700}}>{r.route}</span>
+            <span style={{color:"#e0e8f0",textAlign:"right"}}>{r.legs.toLocaleString()}</span>
+            <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtH(r.mins)}</span>
+            <span style={{color:"#ffd740",textAlign:"right"}}>{r.pax.toLocaleString()}</span>
+            <span style={{color:"#5a7a8a",textAlign:"right"}}>{r.pilotCount}</span>
+          </div>
+        ))}
+      </div>
+    </div>}
+
+    {/* ── FLEET ── */}
+    {tab==="fleet"&&(()=>{
+      const active  = (historyStats.tailStats||[]).filter(t=>t.active);
+      const retired = (historyStats.tailStats||[]).filter(t=>!t.active);
+      return <div>
+        <div style={{fontSize:12,fontWeight:700,color:"#7a9ab8",letterSpacing:"0.1em",marginBottom:8}}>CURRENT FLEET — LIFETIME STATS</div>
+        <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden",marginBottom:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"82px 1fr 60px 55px 55px 50px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+            <span>TAIL</span><span>TYPE</span><span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>PAX</span><span style={{textAlign:"right"}}>PILOTS</span>
+          </div>
+          {active.map((t,i)=>{
+            const isExp=expandedTail===t.tail;
+            return <div key={t.tail}>
+              <div onClick={()=>setExpandedTail(isExp?null:t.tail)}
+                style={{display:"grid",gridTemplateColumns:"82px 1fr 60px 55px 55px 40px",gap:4,padding:"5px 10px",fontSize:12,
+                borderBottom:(!isExp&&i<active.length-1)?"1px solid #0d1117":"none",
+                background:isExp?"#0a1a2a":i%2===0?"#08101e":"#0a1220",cursor:"pointer"}}>
+                <span style={{color:"#00b894",fontWeight:700,fontFamily:"monospace"}}>{t.tail}</span>
+                <span style={{color:"#5a8a9a",fontSize:11}}>{t.desc||t.tail}</span>
+                <span style={{color:"#6a8a9a",textAlign:"right"}}>{fmtHi(t.mins)}</span>
+                <span style={{color:"#e0e8f0",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
+                <span style={{color:"#ffd740",textAlign:"right"}}>{t.pax.toLocaleString()}</span>
+                <span style={{color:"#5a7a8a",textAlign:"right",fontSize:11}}>{isExp?"▾":"▸"}</span>
+              </div>
+              {isExp&&<div style={{background:"#060d14",padding:"8px 14px 10px",borderBottom:"1px solid #1e2730"}}>
+                <div style={{display:"flex",gap:16,flexWrap:"wrap",marginBottom:6}}>
+                  <span style={{fontSize:11,color:"#5a7a8a"}}>First flight: <span style={{color:"#9abacb"}}>{t.firstDate}</span></span>
+                  <span style={{fontSize:11,color:"#5a7a8a"}}>Last flight: <span style={{color:"#9abacb"}}>{t.lastDate}</span></span>
+                  <span style={{fontSize:11,color:"#5a7a8a"}}>Pilots: <span style={{color:"#9abacb"}}>{t.pilotCount}</span></span>
+                  <span style={{fontSize:11,color:"#5a7a8a"}}>Avg per day: <span style={{color:"#9abacb"}}>{t.firstDate&&t.lastDate?Math.round(t.legs/Math.max(1,Math.floor((new Date(t.lastDate)-new Date(t.firstDate))/86400000)*0.6)):'-'}</span></span>
+                </div>
+                {t.topDestList?.length>0&&<div>
+                  <div style={{fontSize:10,color:"#3a5060",marginBottom:4}}>TOP DESTINATIONS</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {t.topDestList.map(d=>(
+                      <span key={d.dest} style={{background:"#0a1520",borderRadius:3,padding:"2px 8px",fontSize:12,
+                        color:"#4a9eff",fontFamily:"monospace",border:"1px solid #1a2a3a"}}>
+                        {d.dest} <span style={{color:"#3a5a6a",fontSize:10}}>{d.n}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>}
+              </div>}
+            </div>;
+          })}
+        </div>
+        <div style={{fontSize:12,fontWeight:700,color:"#f472b6",letterSpacing:"0.1em",marginBottom:8}}>🏆 HALL OF FAME — RETIRED FLEET</div>
+        <div style={{background:"#0a0e14",borderRadius:6,border:"1px solid #1e2730",overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:"82px 1fr 55px 55px 50px 80px",gap:4,padding:"6px 10px",borderBottom:"1px solid #1e2730",fontSize:11,fontWeight:700,color:"#5a7a8a"}}>
+            <span>TAIL</span><span>TYPE</span><span style={{textAlign:"right"}}>HOURS</span><span style={{textAlign:"right"}}>LEGS</span><span style={{textAlign:"right"}}>CREW</span><span>SERVICE</span>
+          </div>
+          {retired.sort((a,b)=>b.legs-a.legs).map((t,i)=>{
+            const hof = i===0?"#ffd700":i===1?"#c084fc":i===2?"#34d399":"#f472b6";
+            return <div key={t.tail} style={{display:"grid",gridTemplateColumns:"82px 1fr 55px 55px 50px 80px",gap:4,padding:"6px 10px",fontSize:12,
+              borderBottom:i<retired.length-1?"1px solid #1a1a2e":"none",background:i<3?"rgba(255,215,0,0.04)":"#0a0d14"}}>
+              <span style={{color:hof,fontWeight:700,fontFamily:"monospace"}}>{t.tail}</span>
+              <span style={{color:"#a08060",fontSize:11}}>{t.desc||t.tail}</span>
+              <span style={{color:"#10b981",textAlign:"right",fontWeight:i<3?700:400}}>{fmtHi(t.mins)}</span>
+              <span style={{color:"#e2c97e",textAlign:"right"}}>{t.legs.toLocaleString()}</span>
+              <span style={{color:"#c084fc",textAlign:"right"}}>{t.pilotCount}</span>
+              <span style={{color:"#7a6a4a",fontSize:11}}>{t.firstDate?.slice(0,7)}–{t.lastDate?.slice(0,7)}</span>
+            </div>;
+          })}
+        </div>
+      </div>;
+    })()}
+  </div>;
+}
+// ── MAIN ───────────────────────────────────────────────────────────────────────
+const NAV=[
+  {id:"fleet", icon:"👥",label:"FLT/DUTY"},
+  {id:"crew",  icon:"✈", label:"CREW"},
+  {id:"night", icon:"🌙",label:"NIGHT"},
+  {id:"tails", icon:"🔧",label:"TAILS"},
+  {id:"payload",icon:"⚖",label:"PAYLOAD"},
+  {id:"fuel",  icon:"⛽",label:"FUEL"},
+  {id:"regs",  icon:"§", label:"REGS"},
+  {id:"quals", icon:"🎖",label:"QUALS"},
+  {id:"stats", icon:"📊",label:"STATS"},
+  {id:"legacy",icon:"🗂",label:"LEGACY"},
+  {id:"import",icon:"↑", label:"IMPORT"},
+];
+
+function App() {
   const [screen,setScreen]=useState("fleet");
   const [winterMode,setWinterMode]=useState(false);
   const [screen2,setScreen2]=useState("crew");
@@ -9470,7 +9706,13 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
 
   useEffect(()=>{
     // Safety net: always load within 5 seconds no matter what
+    const _startTime = Date.now();
     const fallbackTimer = setTimeout(()=>setLoaded(true), 5000);
+    const _minDelay = (cb) => {
+      const elapsed = Date.now() - _startTime;
+      const remaining = Math.max(0, 2500 - elapsed);
+      setTimeout(cb, remaining);
+    };
 
     Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)])
     .then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
@@ -9493,13 +9735,15 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
       try { if(ql) setQualsData(ql); } catch(e){}
       sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); }).catch(()=>{});
       sget(SK.historyStats).then(v=>{ if(v) setHistoryStats(v); }).catch(()=>{});
-      setLoaded(true);
-      try { if(!p?.name)setShowProfile(true); } catch(e){}
+      _minDelay(()=>{
+        setLoaded(true);
+        try { if(!p?.name)setShowProfile(true); } catch(e){}
+      });
     })
     .catch(err=>{
       clearTimeout(fallbackTimer);
       console.error('Storage load error:', err);
-      setLoaded(true);
+      _minDelay(()=>setLoaded(true));
     });
   },[]);
 
@@ -10078,6 +10322,7 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
 
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
-</script>
+
+  </script>
 </body>
 </html>
