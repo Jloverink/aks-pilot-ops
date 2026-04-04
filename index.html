@@ -9470,13 +9470,7 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
 
   useEffect(()=>{
     // Safety net: always load within 5 seconds no matter what
-    const _startTime = Date.now();
     const fallbackTimer = setTimeout(()=>setLoaded(true), 5000);
-    const _minDelay = (cb) => {
-      const elapsed = Date.now() - _startTime;
-      const remaining = Math.max(0, 2500 - elapsed);
-      setTimeout(cb, remaining);
-    };
 
     Promise.all([sget(SK.flights),sget(SK.profile),sget(SK.duties),sget(SK.fleet),sget(SK.crew),sget(SK.delays),sget(SK.nightCurrency),sget(SK.recon),sget(SK.spider),sget(SK.routes),sget(SK.quals)])
     .then(([f,p,d,fl,cr,dl,nc,rc,sp,ra,ql])=>{
@@ -9499,15 +9493,13 @@ function LegacyScreen({ historyStats, historyProgress, onRebuildStats }) {
       try { if(ql) setQualsData(ql); } catch(e){}
       sget(SK.winterMode).then(v=>{ if(v) setWinterMode(!!v); }).catch(()=>{});
       sget(SK.historyStats).then(v=>{ if(v) setHistoryStats(v); }).catch(()=>{});
-      _minDelay(()=>{
-        setLoaded(true);
-        try { if(!p?.name)setShowProfile(true); } catch(e){}
-      });
+      setLoaded(true);
+      try { if(!p?.name)setShowProfile(true); } catch(e){}
     })
     .catch(err=>{
       clearTimeout(fallbackTimer);
       console.error('Storage load error:', err);
-      _minDelay(()=>setLoaded(true));
+      setLoaded(true);
     });
   },[]);
 
