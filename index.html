@@ -3242,7 +3242,19 @@ function FleetScreen({ fleetData, onUpdateDuty, crewData, routeAvgs, wx, wxAge, 
   const tlScrollRef = useRef(null);
   // Auto-scroll to center NOW when zoom level changes
   useEffect(()=>{
-    if(!tlScrollRef.current || tlZoom===0) { if(tlScrollRef.current) tlScrollRef.current.scrollLeft=0; return; }
+    if(!tlScrollRef.current) return;
+    // At zoom 0, scroll to show NOW (roughly 60% into the 20hr span starting at 4am)
+    if(tlZoom===0) {
+      const el=tlScrollRef.current;
+      const nowFrac=(()=>{
+        const d=new Date();
+        const ak=new Date(d.getTime()+((d.getUTCMonth()>=2&&d.getUTCMonth()<=10)?-8:-9)*3600000);
+        const mins=ak.getUTCHours()*60+ak.getUTCMinutes();
+        return Math.max(0,Math.min(1,(mins-4*60)/(20*60)));
+      })();
+      setTimeout(()=>{ el.scrollLeft=Math.max(0,(el.scrollWidth-el.clientWidth)*nowFrac-el.clientWidth/2); },30);
+      return;
+    }
     const el = tlScrollRef.current;
     setTimeout(()=>{ el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2; }, 30);
   },[tlZoom]);
@@ -4107,9 +4119,9 @@ End: ${endReason}`;
                     </div>
 
                     {/* AXIS — scrollable when zoomed */}
-                    <div style={{overflowX:tlZoom>0?"auto":"visible",overflowY:"visible"}}
+                    <div style={{overflowX:"auto",overflowY:"visible",WebkitOverflowScrolling:"touch",cursor:"grab"}}
                       ref={tlScrollRef}>
-                    <div style={{width:tlZoom>0?`${100*Math.pow(2,tlZoom)}%`:"100%",minWidth:"100%"}}>
+                    <div style={{width:tlZoom>0?`${100*Math.pow(2,tlZoom)}%`:"160%",minWidth:"100%"}}>
                     <div style={{display:"flex",gap:6,marginBottom:2}}>
                       <div style={{width:LABEL_W,flexShrink:0}}/>
                       <div style={{flex:1,position:"relative",height:18}}>
