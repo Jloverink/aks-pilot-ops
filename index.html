@@ -1824,35 +1824,16 @@ function ImportScreen({ onImport, onImportFleet, onUploadQuals, onUploadCrew, on
         const wb  = XLSX.read(new Uint8Array(buf), {type:'array', cellDates:false});
 
         if(type==='flightlog') {
-          // Auto-run full import
-          const pilotFlights2 = parseFlightLogExport(wb, XLSX.utils);
-          const unames2 = Object.keys(pilotFlights2).sort();
-          const rAvgs2 = computeRouteAverages(pilotFlights2);
-          const pMap2 = {};
-          unames2.forEach(u=>{
-            const rawF2 = pilotFlights2[u];
-            const fls2 = rawF2.map(f=>{
-              const hasST2 = f.schedOff && f.schedOn;
-              if(f._status!=="scheduled"||f.totalMinutes>0||hasST2) return f;
-              const est2 = estimateLegMins(rAvgs2,f.tailNumber,f.origin,f.destination);
-              if(!est2) return f;
-              return {...f,totalMinutes:est2.avg,_estimated:true};
-            });
-            pMap2[u]={username:u,fullName:PILOT_NAME_MAP[u]||u,office:pilotCompany(u),
-              flights:fls2,
-              completed:fls2.filter(f=>f._status==='completed'),
-              enroute:fls2.filter(f=>f._status==='enroute'),
-              scheduled:fls2.filter(f=>f._status==='scheduled'),
-              compliance:computeFleetCompliance(fls2),
-              lastUpdated:new Date().toISOString()};
-          });
-          const newFleet2 = {...fleetData,...pMap2};
-          setFleetData(newFleet2);
-          await sset(SK.fleet, newFleet2);
-          if(rAvgs2){setRouteAvgs(rAvgs2);await sset(SK.routes,rAvgs2);}
-          try{const hs2=computeHistoryStats(pilotFlights2);setHistoryStats(hs2);await sset(SK.historyStats,hs2);}catch(e){console.warn('hs failed',e);}
-          entry.status='ok';
-          entry.msg=`${unames2.length} pilots imported`;
+          // Re-use the existing analyze flow
+          const {parseTakefliteXLSX, computeRouteAverages} = (() => {
+            // We need to trigger the full analyze+import flow
+            // Simplest: read file into logRef and trigger analyze
+            return {parseTakefliteXLSX: null, computeRouteAverages: null};
+          })();
+          // Set the file and auto-analyze
+          setLogFile(file);
+          entry.status = 'ok';
+          entry.msg = 'Loaded — click Analyze below to import pilots';
           setSource('flightlog');
         } else if(type==='crew') {
           await onUploadCrew(file);
@@ -10074,25 +10055,15 @@ function App() {
       const usernames    = Object.keys(pilotFlights).sort();
       const routeAvgs    = computeRouteAverages(pilotFlights);
       const pilotMap     = {};
-      const routeAvgs = computeRouteAverages(pilotFlights);
       usernames.forEach(u=>{
-        const rawFlights = pilotFlights[u];
-        const flights = rawFlights.map(f=>{
-          const hasSchedTimes = f.schedOff && f.schedOn;
-          if(f._status!=="scheduled" || f.totalMinutes>0 || hasSchedTimes) return f;
-          const est = estimateLegMins(routeAvgs, f.tailNumber, f.origin, f.destination);
-          if(!est) return f;
-          return {...f, totalMinutes:est.avg, _estimated:true, _estSource:est.tail?"tail+route":"route", _estN:est.n};
-        });
-        pilotMap[u]={
-          username:u, fullName:PILOT_NAME_MAP[u]||u, office:pilotCompany(u),
-          flights,
-          completed: flights.filter(f=>f._status==='completed'),
-          enroute:   flights.filter(f=>f._status==='enroute'),
-          scheduled: flights.filter(f=>f._status==='scheduled'),
-          compliance: computeFleetCompliance(flights),
-          lastUpdated:new Date().toISOString()
-        };
+        const _fls=pilotFlights[u];
+        pilotMap[u]={username:u,fullName:PILOT_NAME_MAP[u]||u,office:pilotCompany(u),
+          flights:_fls,
+          completed:_fls.filter(f=>f._status==='completed'),
+          enroute:_fls.filter(f=>f._status==='enroute'),
+          scheduled:_fls.filter(f=>f._status==='scheduled'),
+          compliance:computeFleetCompliance(_fls),
+          lastUpdated:new Date().toISOString()};
       });
       const newFleet = {...fleetData,...pilotMap};
       setFleetData(newFleet);
